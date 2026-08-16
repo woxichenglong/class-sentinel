@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">课堂哨兵</string>
+    <string name="tab_listen">听讲</string>
+    <string name="tab_history">历史</string>
+    <string name="tab_settings">设置</string>
+</resources>
