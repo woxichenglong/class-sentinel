@@ -3,6 +3,7 @@ package com.classsentinel.core.evaluation
 import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.speech.PcmReplayResult
 import com.classsentinel.core.speech.ReplayObservation
+import com.classsentinel.core.speech.ReplayMode
 import com.classsentinel.core.speech.ReplayPhase
 import com.classsentinel.core.speech.StreamingAsrEvent
 import org.junit.Assert.assertEquals
@@ -12,10 +13,12 @@ import org.junit.Test
 class UnifiedAsrScorerTest {
 
     @Test
-    fun `score preserves experiment identity and computes latency and rtf`() {
+    fun `score preserves experiment identity and computes latency and steady state rtf`() {
         val result = replayResult(
-            elapsedMs = 500L,
+            totalElapsedMs = 500L,
             inputDurationMs = 1_000L,
+            recognizerInitMs = 100L,
+            decodeElapsedMs = 400L,
             events = listOf(
                 ReplayObservation(StreamingAsrEvent.Partial(1, "CAPM", 100L), 120L),
                 ReplayObservation(StreamingAsrEvent.Final(1, "CAPM beta", 0L, 1_000L), 500L),
@@ -37,12 +40,16 @@ class UnifiedAsrScorerTest {
         assertEquals("abc1234", score.gitCommitSha)
         assertEquals("run-001", score.runId)
         assertEquals(ReplayPhase.WARM, score.phase)
+        assertEquals(ReplayMode.FAST, score.replayMode)
         assertEquals(0.0, score.cer, 0.0)
         assertEquals(0.0, score.wer, 0.0)
         assertEquals(0.0, score.codeSwitchErrorRate, 0.0)
         assertEquals(120L, score.firstPartialLatencyMs)
         assertEquals(500L, score.firstFinalLatencyMs)
-        assertEquals(0.5, score.rtf, 0.0)
+        assertEquals(100L, score.recognizerInitMs)
+        assertEquals(400L, score.decodeElapsedMs)
+        assertEquals(500L, score.totalElapsedMs)
+        assertEquals(0.4, score.steadyStateRtf!!, 0.0)
         assertEquals(650L, score.performance.eventTriggerLatencyMs)
         assertEquals(42.5, score.performance.avgCpuPercent!!, 0.0)
     }
@@ -109,8 +116,10 @@ class UnifiedAsrScorerTest {
     }
 
     private fun replayResult(
-        elapsedMs: Long = 100L,
+        totalElapsedMs: Long = 100L,
         inputDurationMs: Long = 1_000L,
+        recognizerInitMs: Long? = null,
+        decodeElapsedMs: Long? = null,
         events: List<ReplayObservation> = emptyList(),
     ) = PcmReplayResult(
         modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id,
@@ -120,7 +129,9 @@ class UnifiedAsrScorerTest {
         engineName = "fake",
         inputSamples = 16_000L,
         inputDurationMs = inputDurationMs,
-        elapsedMs = elapsedMs,
+        totalElapsedMs = totalElapsedMs,
         observations = events,
+        recognizerInitMs = recognizerInitMs,
+        decodeElapsedMs = decodeElapsedMs,
     )
 }

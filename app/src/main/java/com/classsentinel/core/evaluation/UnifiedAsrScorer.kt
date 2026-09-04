@@ -1,6 +1,7 @@
 package com.classsentinel.core.evaluation
 
 import com.classsentinel.core.speech.PcmReplayResult
+import com.classsentinel.core.speech.ReplayMode
 import com.classsentinel.core.speech.ReplayPhase
 import com.classsentinel.core.speech.StreamingAsrEvent
 
@@ -35,9 +36,11 @@ data class KeywordMetrics(
 /** Unified quality/performance record; source and hypothesis text are intentionally not retained. */
 data class UnifiedAsrScore(
     val modelProfileId: String,
+    val artifactSetHash: String,
     val gitCommitSha: String,
     val runId: String,
     val phase: ReplayPhase,
+    val replayMode: ReplayMode,
     val cer: Double,
     val wer: Double,
     val codeSwitchErrorRate: Double,
@@ -45,9 +48,12 @@ data class UnifiedAsrScore(
     val names: KeywordMetrics,
     val firstPartialLatencyMs: Long?,
     val firstFinalLatencyMs: Long?,
-    val rtf: Double,
+    val steadyStateRtf: Double?,
+    val inputPacketMs: Int,
     val inputDurationMs: Long,
-    val elapsedMs: Long,
+    val recognizerInitMs: Long?,
+    val decodeElapsedMs: Long?,
+    val totalElapsedMs: Long,
     val performance: DevicePerformanceMetrics,
 )
 
@@ -67,9 +73,11 @@ object UnifiedAsrScorer {
 
         return UnifiedAsrScore(
             modelProfileId = result.modelProfileId,
+            artifactSetHash = result.artifactSetHash,
             gitCommitSha = result.gitCommitSha,
             runId = result.runId,
             phase = result.phase,
+            replayMode = result.replayMode,
             cer = errorRate(characterTokens(referenceText), characterTokens(hypothesisText)),
             wer = errorRate(wordTokens(referenceText), wordTokens(hypothesisText)),
             codeSwitchErrorRate = errorRate(scriptRuns(referenceText), scriptRuns(hypothesisText)),
@@ -77,13 +85,14 @@ object UnifiedAsrScorer {
             names = keywordMetrics(referenceText, hypothesisText, names),
             firstPartialLatencyMs = result.firstPartialLatencyMs,
             firstFinalLatencyMs = result.firstFinalLatencyMs,
-            rtf = if (result.inputDurationMs > 0L) {
-                result.elapsedMs.toDouble() / result.inputDurationMs
-            } else {
-                0.0
+            steadyStateRtf = result.decodeElapsedMs?.let { decodeMs ->
+                if (result.inputDurationMs > 0L) decodeMs.toDouble() / result.inputDurationMs else null
             },
+            inputPacketMs = result.inputPacketMs,
             inputDurationMs = result.inputDurationMs,
-            elapsedMs = result.elapsedMs,
+            recognizerInitMs = result.recognizerInitMs,
+            decodeElapsedMs = result.decodeElapsedMs,
+            totalElapsedMs = result.totalElapsedMs,
             performance = performance,
         )
     }

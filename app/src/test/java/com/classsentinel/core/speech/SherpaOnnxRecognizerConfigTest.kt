@@ -72,7 +72,7 @@ class SherpaOnnxRecognizerConfigTest {
                     rule2 = ModelEndpointRule(true, 0.7f, 0.0f),
                     rule3 = ModelEndpointRule(false, 0.0f, 12.0f),
                 ),
-                streamChunkMs = 480,
+                artifactStreamingChunkMs = 480,
                 enableEndpoint = false,
                 maxActivePaths = 9,
                 hotwordsFile = "hotwords.txt",

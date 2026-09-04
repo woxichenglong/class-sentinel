@@ -15,11 +15,11 @@
 
 ### 验证
 
-- P1 focused regression：47 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：84 个测试类、424 个用例，失败 0、错误 0、跳过 0。
+- P1 focused regression：48 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：85 个测试类、434 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
-- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、统一 scorer 和 34 列 CSV 输出；当前只锁定 14M baseline，未内置 X-ASR 资产。
-- 本轮 Debug APK：170,866,995 bytes；SHA-256 为 `dd70c6ccfadb840ba0f30606ee6940f84e2a45945cfb4e2769b462bb0500f76b`。
+- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、FAST/REALTIME 与分层 timing、`PreparedModel` 绑定、统一 scorer 和 39 列 CSV 输出；当前只锁定 14M baseline，未内置 X-ASR 资产。
+- 本轮 Debug APK：170,883,379 bytes；SHA-256 为 `227e73ff7c5f80f6e73ef1a889eeefac41bbd7a72d4253db2dfd064bf3203667`。
 
 ## [Unreleased] — v0.3.0 可靠性、学习产物与音频工作流（2026-09-03）
 

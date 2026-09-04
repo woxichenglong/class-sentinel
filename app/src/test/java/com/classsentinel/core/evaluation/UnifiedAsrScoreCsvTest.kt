@@ -21,7 +21,7 @@ class UnifiedAsrScoreCsvTest {
                 engineName = "x-asr",
                 inputSamples = 16_000L,
                 inputDurationMs = 1_000L,
-                elapsedMs = 1_200L,
+                totalElapsedMs = 1_200L,
                 observations = listOf(
                     ReplayObservation(StreamingAsrEvent.Final(1, "结果", 0L, 1_000L), 1_200L),
                 ),
@@ -40,7 +40,12 @@ class UnifiedAsrScoreCsvTest {
         assertTrue(header.contains("wer"))
         assertTrue(header.contains("code_switch_error_rate"))
         assertTrue(header.contains("name_false_positive_rate"))
-        assertTrue(header.contains("rtf"))
+        assertTrue(header.contains("replay_mode"))
+        assertTrue(header.contains("input_packet_ms"))
+        assertTrue(header.contains("recognizer_init_ms"))
+        assertTrue(header.contains("decode_elapsed_ms"))
+        assertTrue(header.contains("total_elapsed_ms"))
+        assertTrue(header.contains("steady_state_rtf"))
         assertTrue(header.contains("avg_cpu_percent"))
         assertTrue(row.contains("x-asr-480"))
         assertTrue(row.contains("\"sha,with-comma\""))

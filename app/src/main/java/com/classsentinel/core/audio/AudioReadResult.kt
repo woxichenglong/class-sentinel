@@ -26,6 +26,12 @@ internal fun classifyAudioRead(n: Int): AudioReadResult = when {
     else -> AudioReadResult.Fatal(n)
 }
 
+/** A negative read caused by an already requested user stop completes the PCM stream normally. */
+internal fun shouldGracefullyCompleteAfterStop(
+    result: AudioReadResult,
+    stopRequested: Boolean,
+): Boolean = stopRequested && result is AudioReadResult.Fatal
+
 /**
  * 音频采集 typed 失败：初始化（minBuf<=0 / 构造失败）或读取阶段（read<0）的可审计失败。
  *

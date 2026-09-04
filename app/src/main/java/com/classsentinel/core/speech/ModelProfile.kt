@@ -68,7 +68,7 @@ internal data class ModelRecognizerProfile(
     val sampleRate: Int,
     val featureDim: Int,
     val endpoint: ModelEndpointProfile,
-    val streamChunkMs: Int? = null,
+    val artifactStreamingChunkMs: Int? = null,
     val enableEndpoint: Boolean = true,
     val maxActivePaths: Int = 4,
     val hotwordsFile: String = "",
@@ -84,7 +84,7 @@ internal data class ModelRecognizerProfile(
         require(provider.isNotBlank()) { "MODEL_PROVIDER_INVALID" }
         require(sampleRate > 0) { "MODEL_SAMPLE_RATE_INVALID" }
         require(featureDim > 0) { "MODEL_FEATURE_DIM_INVALID" }
-        require(streamChunkMs == null || streamChunkMs > 0) { "MODEL_CHUNK_INVALID" }
+        require(artifactStreamingChunkMs == null || artifactStreamingChunkMs > 0) { "MODEL_CHUNK_INVALID" }
         require(maxActivePaths > 0) { "MODEL_MAX_ACTIVE_PATHS_INVALID" }
         require(hotwordsScore.isFinite()) { "MODEL_HOTWORDS_SCORE_INVALID" }
         require(blankPenalty.isFinite()) { "MODEL_BLANK_PENALTY_INVALID" }

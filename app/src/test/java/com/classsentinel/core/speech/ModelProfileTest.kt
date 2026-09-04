@@ -31,7 +31,7 @@ class ModelProfileTest {
         assertEquals(2.4f, profile.recognizer.endpoint.rule1.minTrailingSilence, 0.0f)
         assertEquals(1.4f, profile.recognizer.endpoint.rule2.minTrailingSilence, 0.0f)
         assertEquals(20.0f, profile.recognizer.endpoint.rule3.minUtteranceLength, 0.0f)
-        assertEquals(null, profile.recognizer.streamChunkMs)
+        assertEquals(null, profile.recognizer.artifactStreamingChunkMs)
     }
 
     @Test

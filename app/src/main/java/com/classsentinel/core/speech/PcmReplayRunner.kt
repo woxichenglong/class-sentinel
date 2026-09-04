@@ -1,6 +1,7 @@
 package com.classsentinel.core.speech
 
 import java.io.InputStream
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
@@ -11,6 +12,26 @@ enum class ReplayPhase {
     WARMUP,
     WARM,
     STEADY,
+}
+
+/** Whether replay emits packets as fast as possible or follows transport timing. */
+enum class ReplayMode {
+    FAST,
+    REALTIME,
+}
+
+/** Replay/transport packet settings; deliberately independent from artifact metadata. */
+data class ReplayInputConfig(
+    val inputPacketMs: Int = DEFAULT_INPUT_PACKET_MS,
+    val mode: ReplayMode = ReplayMode.FAST,
+) {
+    init {
+        require(inputPacketMs > 0) { "REPLAY_INPUT_PACKET_INVALID" }
+    }
+
+    companion object {
+        const val DEFAULT_INPUT_PACKET_MS = 100
+    }
 }
 
 /** One event and the elapsed time from replay start to observation. */
@@ -28,8 +49,13 @@ data class PcmReplayResult(
     val engineName: String,
     val inputSamples: Long,
     val inputDurationMs: Long,
-    val elapsedMs: Long,
+    val totalElapsedMs: Long,
     val observations: List<ReplayObservation>,
+    val inputPacketMs: Int = ReplayInputConfig.DEFAULT_INPUT_PACKET_MS,
+    val replayMode: ReplayMode = ReplayMode.FAST,
+    val recognizerInitMs: Long? = null,
+    val decodeElapsedMs: Long? = null,
+    val artifactSetHash: String = "",
 ) {
     val firstPartialLatencyMs: Long?
         get() = observations
@@ -44,21 +70,25 @@ data class PcmReplayResult(
 
 /**
  * Replays fixed PCM chunks directly into the streaming ASR boundary.
- * This class deliberately does not parse WAV files or invoke the legacy importer/VAD path.
+ * [run] accepts PCM directly; [runWav] uses the dedicated PCM16 WAV source and never invokes
+ * the legacy importer/VAD path.
  */
 internal class PcmReplayRunner(
     private val nowNanos: () -> Long = System::nanoTime,
+    private val delayBetweenPackets: suspend (Long) -> Unit = { delay(it) },
 ) {
     suspend fun run(
-        profile: ModelProfile,
+        preparedModel: PreparedModel,
         gitCommitSha: String,
         runId: String,
         phase: ReplayPhase,
         pcm: Flow<ShortArray>,
-        engine: StreamingSpeechEngine,
+        config: ReplayInputConfig = ReplayInputConfig(),
     ): PcmReplayResult {
         require(gitCommitSha.isNotBlank()) { "REPLAY_GIT_SHA_REQUIRED" }
         require(runId.isNotBlank()) { "REPLAY_RUN_ID_REQUIRED" }
+        val profile = preparedModel.profile
+        val engine = preparedModel.engine
         val startedAtNanos = nowNanos()
         var inputSamples = 0L
         val observations = mutableListOf<ReplayObservation>()
@@ -72,6 +102,7 @@ internal class PcmReplayRunner(
             )
         }
         val totalElapsedMs = elapsedMs(startedAtNanos)
+        val timings = (engine as? ReplayTimingSource)?.lastReplayTimings
 
         return PcmReplayResult(
             modelProfileId = profile.id,
@@ -81,36 +112,39 @@ internal class PcmReplayRunner(
             engineName = engine.name,
             inputSamples = inputSamples,
             inputDurationMs = inputSamples * 1_000L / profile.recognizer.sampleRate,
-            elapsedMs = totalElapsedMs,
+            totalElapsedMs = totalElapsedMs,
             observations = observations.toList(),
+            inputPacketMs = config.inputPacketMs,
+            replayMode = config.mode,
+            recognizerInitMs = timings?.recognizerInitMs,
+            decodeElapsedMs = timings?.decodeElapsedMs,
+            artifactSetHash = preparedModel.artifactSetHash,
         )
     }
 
     suspend fun runWav(
-        profile: ModelProfile,
+        preparedModel: PreparedModel,
         gitCommitSha: String,
         runId: String,
         phase: ReplayPhase,
         wav: InputStream,
-        chunkMs: Int = profile.recognizer.streamChunkMs ?: DEFAULT_CHUNK_MS,
-        engine: StreamingSpeechEngine,
+        config: ReplayInputConfig = ReplayInputConfig(),
     ): PcmReplayResult = run(
-        profile = profile,
+        preparedModel = preparedModel,
         gitCommitSha = gitCommitSha,
         runId = runId,
         phase = phase,
         pcm = PcmReplayWavSource.chunks(
             input = wav,
-            expectedSampleRate = profile.recognizer.sampleRate,
-            chunkMs = chunkMs,
+            expectedSampleRate = preparedModel.profile.recognizer.sampleRate,
+            packetMs = config.inputPacketMs,
+            mode = config.mode,
+            delayBetweenPackets = delayBetweenPackets,
         ),
-        engine = engine,
+        config = config,
     )
 
     private fun elapsedMs(startedAtNanos: Long): Long =
         ((nowNanos() - startedAtNanos) / 1_000_000L).coerceAtLeast(0L)
 
-    private companion object {
-        const val DEFAULT_CHUNK_MS = 100
-    }
 }

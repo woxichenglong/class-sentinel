@@ -1,6 +1,7 @@
 package com.classsentinel.core.audio
 
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -34,6 +35,28 @@ class AudioStreamerLogicTest {
     @Test
     fun `ERROR_INVALID_OPERATION classifies as Fatal`() {
         assertEquals(AudioReadResult.Fatal(errorInvalidOperation), classifyAudioRead(errorInvalidOperation))
+    }
+
+    @Test
+    fun `fatal read after an explicit stop is a graceful completion decision`() {
+        assertTrue(
+            shouldGracefullyCompleteAfterStop(
+                result = AudioReadResult.Fatal(errorInvalidOperation),
+                stopRequested = true,
+            ),
+        )
+        assertFalse(
+            shouldGracefullyCompleteAfterStop(
+                result = AudioReadResult.Fatal(errorInvalidOperation),
+                stopRequested = false,
+            ),
+        )
+        assertFalse(
+            shouldGracefullyCompleteAfterStop(
+                result = AudioReadResult.Data(1),
+                stopRequested = true,
+            ),
+        )
     }
 
     @Test

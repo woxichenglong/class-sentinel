@@ -236,11 +236,17 @@ open class AudioStreamer(
                     // v0.2 Task 7：0 结果不忙等，有界退避后重读（delay 可取消）
                     AudioReadResult.RetryLater -> delay(ZERO_READ_RETRY_MS)
 
-                    // v0.2 Task 7：负结果不 emit、不循环吞掉，typed 失败进入上层 pipeline
-                    is AudioReadResult.Fatal -> throw AudioCaptureException(
-                        code = result.code,
-                        message = "音频读取失败: AudioRecord.read() 返回错误码 ${result.code}",
-                    )
+                    // stop() may unblock AudioRecord.read() with a platform negative code.
+                    is AudioReadResult.Fatal -> if (
+                        shouldGracefullyCompleteAfterStop(result, stopRequested.get())
+                    ) {
+                        break
+                    } else {
+                        throw AudioCaptureException(
+                            code = result.code,
+                            message = "音频读取失败: AudioRecord.read() 返回错误码 ${result.code}",
+                        )
+                    }
                 }
             }
         }

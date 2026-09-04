@@ -65,6 +65,68 @@ class SherpaOnnxStreamingEngineTest {
         assertEquals(1, stream.decodeCalls)
     }
 
+    @Test
+    fun `engine identity and sample rate come from model profile`() = runTest {
+        val stream = FakeStream()
+        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
+            id = "test-8k-profile",
+            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 8_000),
+        )
+        val engine = SherpaOnnxStreamingEngine(
+            profile = profile,
+            recognizerFactory = { FakeRecognizer(stream) },
+        )
+
+        engine.transcribe(flowOf(shortArrayOf(100))).toList()
+
+        assertEquals(profile.id, engine.modelProfileId)
+        assertEquals(8_000, engine.sampleRate)
+        assertEquals(listOf(8_000), stream.acceptedRates)
+    }
+
+    @Test
+    fun `engine reports recognizer init and decode timing separately`() = runTest {
+        val clock = FakeClock()
+        val stream = FlushStream { clock.advanceMs(13L) }
+        val engine = SherpaOnnxStreamingEngine(
+            recognizerFactory = {
+                clock.advanceMs(7L)
+                FakeRecognizer(stream)
+            },
+            nowNanos = { clock.nowNanos },
+        )
+
+        engine.transcribe(flowOf(shortArrayOf(100))).toList()
+
+        assertEquals(7L, engine.lastReplayTimings?.recognizerInitMs)
+        assertEquals(13L, engine.lastReplayTimings?.decodeElapsedMs)
+    }
+
+    @Test
+    fun `decode timing excludes time waiting for the next pcm packet`() = runTest {
+        val clock = FakeClock()
+        val stream = FakeStream()
+        val engine = SherpaOnnxStreamingEngine(
+            recognizerFactory = { FakeRecognizer(stream) },
+            nowNanos = { clock.nowNanos },
+        )
+        val pcm = kotlinx.coroutines.flow.flow {
+            emit(shortArrayOf(100))
+            clock.advanceMs(100L)
+            emit(shortArrayOf(100))
+        }
+
+        engine.transcribe(pcm).toList()
+
+        assertEquals(0L, engine.lastReplayTimings?.decodeElapsedMs)
+    }
+
+    private class FakeClock(var nowNanos: Long = 0L) {
+        fun advanceMs(ms: Long) {
+            nowNanos += ms * 1_000_000L
+        }
+    }
+
     private class FakeRecognizer(
         private val fakeStream: SherpaOnlineStreamPort,
     ) : SherpaOnlineRecognizerPort {
@@ -122,12 +184,16 @@ class SherpaOnnxStreamingEngineTest {
         }
     }
 
-    private class FlushStream : SherpaOnlineStreamPort {
+    private class FlushStream(
+        private val onAccept: () -> Unit = {},
+    ) : SherpaOnlineStreamPort {
         var inputFinishedCalls = 0
         var decodeCalls = 0
         private var readyFrames = 0
 
-        override fun acceptWaveform(samples: FloatArray, sampleRate: Int) = Unit
+        override fun acceptWaveform(samples: FloatArray, sampleRate: Int) {
+            onAccept()
+        }
 
         override fun isReady(): Boolean = readyFrames > 0
 

@@ -101,8 +101,9 @@ AudioStreamer
 - `[已完成]` `ModelProfile`：当前 14M baseline 的 artifact、SHA-256/size、recognizer 配置、endpoint 和能力声明集中管理。
 - `[已完成]` `SherpaModelInstaller`：按 profile 校验目标文件 hash/size，使用 profile marker；有效缓存不重读 APK assets，同尺寸损坏文件会被替换。
 - `[已完成]` `SherpaOnnxRecognizerFactory`：从 profile 映射 artifact 路径、provider、modelType、modelingUnit、decode、endpoint、hotword/rule 参数。
-- `[已完成]` `PcmReplayRunner`：直接接受 PCM 或 PCM16 mono WAV，输出 `modelProfileId`、`gitCommitSha`、`runId`、phase、事件延迟和输入/运行时长；不经过 legacy importer/VAD。
-- `[已完成]` `UnifiedAsrScorer` + CSV：输出 CER、混合词 WER、脚本级 code-switch error、专业词/姓名 Recall 与 False Positive、First Partial/Final、RTF 和可选设备指标；CSV 不保存参考/识别正文。
+- `[已完成]` `PcmReplayRunner`：`PreparedModel` 将 profile、artifactSetHash 与 profile-bound engine 绑定；直接接受 PCM 或 PCM16 mono WAV，使用独立 `ReplayInputConfig.inputPacketMs`（默认 100ms），支持 FAST/REALTIME，输出 init/decode/total timing；不经过 legacy importer/VAD。
+- `[已完成]` `UnifiedAsrScorer` + CSV：输出 CER、混合词 WER、脚本级 code-switch error、专业词/姓名 Recall 与 False Positive、First Partial/Final、`steadyStateRtf` 和可选设备指标；CSV 记录 profile/artifact/run/mode/packet/timing，不保存参考/识别正文。
+- `[已完成]` AudioRecord stop 边界：显式 stop 后平台负读码视为 graceful EOF，正常运行期间负读码仍保持 typed failure。
 - `[待补]` X-ASR/small bilingual 的真实 artifact、许可证、配置和 hash；未核实前不加入 profile。
 - `[待补]` debug-only model importer 或受控 `run-as` 导入 seam；不把 replay 绑定到直接写应用私有目录。
 - `[待补]` 固定金融课堂 corpus、reference transcript、warm-up/交错顺序记录和 K80 E2E 采集。

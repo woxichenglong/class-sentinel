@@ -1,6 +1,7 @@
 package com.classsentinel.core.speech
 
 import java.io.InputStream
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
@@ -9,11 +10,13 @@ internal object PcmReplayWavSource {
     fun chunks(
         input: InputStream,
         expectedSampleRate: Int,
-        chunkMs: Int,
+        packetMs: Int,
+        mode: ReplayMode = ReplayMode.FAST,
+        delayBetweenPackets: suspend (Long) -> Unit = { delay(it) },
     ): Flow<ShortArray> = flow {
         require(expectedSampleRate > 0) { "REPLAY_SAMPLE_RATE_INVALID" }
-        require(chunkMs > 0) { "REPLAY_CHUNK_INVALID" }
-        val chunkSamples = (expectedSampleRate.toLong() * chunkMs / 1_000L)
+        require(packetMs > 0) { "REPLAY_CHUNK_INVALID" }
+        val chunkSamples = (expectedSampleRate.toLong() * packetMs / 1_000L)
             .coerceAtLeast(1L)
             .coerceAtMost(Int.MAX_VALUE.toLong())
             .toInt()
@@ -44,7 +47,14 @@ internal object PcmReplayWavSource {
                     chunkHeader.copyOfRange(0, 4).contentEquals(DATA) -> {
                         require(format != null) { "REPLAY_WAV_FORMAT" }
                         require(size % 2L == 0L) { "REPLAY_WAV_FORMAT" }
-                        emitPcm(source, size, chunkSamples) { emit(it) }
+                        emitPcm(
+                            source = source,
+                            byteCount = size,
+                            chunkSamples = chunkSamples,
+                            packetMs = packetMs,
+                            mode = mode,
+                            delayBetweenPackets = delayBetweenPackets,
+                        ) { emit(it) }
                         emittedData = true
                     }
                     else -> skipRequired(source, size)
@@ -60,10 +70,14 @@ internal object PcmReplayWavSource {
         source: InputStream,
         byteCount: Long,
         chunkSamples: Int,
+        packetMs: Int,
+        mode: ReplayMode,
+        delayBetweenPackets: suspend (Long) -> Unit,
         emitChunk: suspend (ShortArray) -> Unit,
     ) {
         val chunkBytes = chunkSamples * 2
         var remaining = byteCount
+        var emittedPacket = false
         while (remaining > 0L) {
             val size = minOf(remaining, chunkBytes.toLong()).toInt()
             val bytes = ByteArray(size)
@@ -72,7 +86,11 @@ internal object PcmReplayWavSource {
                 val offset = index * 2
                 ((bytes[offset].toInt() and 0xFF) or (bytes[offset + 1].toInt() shl 8)).toShort()
             }
+            if (emittedPacket && mode == ReplayMode.REALTIME) {
+                delayBetweenPackets(packetMs.toLong())
+            }
             emitChunk(samples)
+            emittedPacket = true
             remaining -= size
         }
     }

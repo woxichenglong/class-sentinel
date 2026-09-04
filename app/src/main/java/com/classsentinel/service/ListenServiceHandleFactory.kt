@@ -16,6 +16,9 @@ import com.classsentinel.core.pipeline.StreamingListenPipeline
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.core.speech.SherpaOnnxRecognizerFactory
 import com.classsentinel.core.speech.SherpaOnnxStreamingEngine
+import com.classsentinel.core.speech.ModelProfile
+import com.classsentinel.core.speech.ModelProfiles
+import com.classsentinel.core.speech.ProfileBoundStreamingSpeechEngine
 import com.classsentinel.core.speech.StreamingAsrEvent
 import com.classsentinel.core.speech.StreamingSpeechEngine
 import com.classsentinel.data.AppDatabase
@@ -113,9 +116,13 @@ internal class ListenServiceHandleFactory(
 }
 
 /** Live production seam: local sherpa streaming only; no VAD/HTTP fallback. */
-internal fun createLiveStreamingSpeechEngine(modelDirectory: File): StreamingSpeechEngine =
+internal fun createLiveStreamingSpeechEngine(
+    modelDirectory: File,
+    profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+): ProfileBoundStreamingSpeechEngine =
     SherpaOnnxStreamingEngine(
-        recognizerFactory = { SherpaOnnxRecognizerFactory.create(modelDirectory) },
+        profile = profile,
+        recognizerFactory = { SherpaOnnxRecognizerFactory.create(modelDirectory, profile) },
     )
 
 /** 课程会话持久层适配：课程创建与收尾统一经 CourseRepository，不新增任何 Room 字段/迁移。 */
