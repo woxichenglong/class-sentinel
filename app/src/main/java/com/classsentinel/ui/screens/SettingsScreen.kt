@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -44,20 +46,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.classsentinel.core.config.AppConfig
+import androidx.core.content.ContextCompat
 import com.classsentinel.core.detect.NameEntry
+import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.data.AiSettings
+import com.classsentinel.data.AnswerHistoryRepository
+import com.classsentinel.data.AppDatabase
 import com.classsentinel.data.Channels
+import com.classsentinel.data.SettingsRepository
 import com.classsentinel.data.SettingsRepositoryHolder
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+import android.Manifest
+import android.content.pm.PackageManager
 
-/**
- * 设置页：九组设置（点名/提问/语音/提醒/AI/总结/数据/隐私/通用）。
- * 全部经 SettingsRepository 持久化到 DataStore，并即时回写 AppConfig。
- */
+/** Student settings: identity, answer provider, safe reminders, local model, and cleanup. */
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
@@ -65,42 +71,38 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { repo.load() }
 
-    var showSelfTest by rememberSaveable { mutableStateOf(false) }
-    if (showSelfTest) {
-        SelfTestScreen()
-        return
-    }
-
-    val names by repo.nameListFlow.collectAsState(initial = AppConfig.names.value)
-    val sensitivity by repo.sensitivityFlow.collectAsState(initial = AppConfig.sensitivity.value)
+    val database = remember { AppDatabase.get(context) }
+    val answerHistory = remember(database) { AnswerHistoryRepository(database.eventDao()) }
+    val names by repo.nameListFlow.collectAsState(initial = emptyList())
     val preset by repo.sensitivityPresetFlow.collectAsState(initial = "standard")
-    val rollcallSec by repo.rollcallSuppressMsFlow.collectAsState(initial = AppConfig.sensitivity.value.rollcallSuppressMs / 1000)
-    val questionSec by repo.questionSuppressMsFlow.collectAsState(initial = AppConfig.sensitivity.value.questionSuppressMs / 1000)
-    val vadDb by repo.vadDbFlow.collectAsState(initial = AppConfig.sensitivity.value.vadDb)
-    val qLevel by repo.questionWordLevelFlow.collectAsState(initial = AppConfig.sensitivity.value.questionWordLevel)
-    val segmentMax by repo.segmentMaxSecFlow.collectAsState(initial = 4)
-    val asrEngine by repo.asrEngineFlow.collectAsState(initial = "telespeech")
-    val chVibrate by repo.channelFlow(Channels.VIBRATE).collectAsState(initial = Channels.DEFAULT.contains(Channels.VIBRATE))
-    val chRingtone by repo.channelFlow(Channels.RINGTONE).collectAsState(initial = Channels.DEFAULT.contains(Channels.RINGTONE))
-    val chNotify by repo.channelFlow(Channels.NOTIFY).collectAsState(initial = Channels.DEFAULT.contains(Channels.NOTIFY))
-    val chFlash by repo.channelFlow(Channels.FLASH).collectAsState(initial = Channels.DEFAULT.contains(Channels.FLASH))
-    val chEar by repo.channelFlow(Channels.EAR).collectAsState(initial = Channels.DEFAULT.contains(Channels.EAR))
-    val lockscreenNotify by repo.lockscreenNotifyFlow.collectAsState(initial = true)
+    val rollcallSec by repo.rollcallSuppressMsFlow.collectAsState(initial = 60_000L)
+    val questionSec by repo.questionSuppressMsFlow.collectAsState(initial = 120_000L)
+    val qLevel by repo.questionWordLevelFlow.collectAsState(initial = 2)
+    val chVibrate by repo.channelFlow(Channels.VIBRATE).collectAsState(initial = true)
+    val chNotify by repo.channelFlow(Channels.NOTIFY).collectAsState(initial = true)
     val vibrateMode by repo.vibrationModeFlow.collectAsState(initial = "normal")
-    val ringtoneVolume by repo.ringtoneVolumeFlow.collectAsState(initial = 80)
-    val ai by repo.aiSettingsFlow.collectAsState(initial = AiSettings("", AppConfig.siliconApiKey, ""))
+    val ai by repo.aiSettingsFlow.collectAsState(initial = defaultAiSettingsForUi())
     val answerLength by repo.answerLengthFlow.collectAsState(initial = "mid")
     val answerStyle by repo.answerStyleFlow.collectAsState(initial = "terseness")
     val streamOutput by repo.streamOutputFlow.collectAsState(initial = true)
-    val autoSummary by repo.autoSummaryFlow.collectAsState(initial = false)
-    val retentionDays by repo.retentionDaysFlow.collectAsState(initial = "30")
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
 
-    // ---- 名字表编辑草稿 ----
-    var draftName by remember { mutableStateOf("") }
-    var draftVariants by remember { mutableStateOf("") }
+    var draftName by rememberSaveable { mutableStateOf("") }
+    var draftVariants by rememberSaveable { mutableStateOf("") }
+    var showClearDialog by rememberSaveable { mutableStateOf(false) }
+    var clearMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
-    fun saveSnap(fn: suspend () -> Unit) { scope.launch { runCatching { fn() }.onFailure { println("[Settings] 保存失败: ${it.message}") } } }
+    fun saveSnap(action: suspend () -> Unit) {
+        scope.launch {
+            try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                clearMessage = "设置保存失败，请重试"
+            }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -109,10 +111,8 @@ fun SettingsScreen() {
     ) {
         item { Text("设置", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(horizontal = 16.dp)) }
 
-        // ================= 1. 点名 =================
         item {
-            SectionCard("点名") {
-                Text("名字表", style = MaterialTheme.typography.titleSmall)
+            SectionCard("姓名与识别") {
                 names.forEach { entry ->
                     Row(
                         Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -121,8 +121,7 @@ fun SettingsScreen() {
                         Column(Modifier.weight(1f)) {
                             Text(entry.display, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                "变体：${entry.variants.take(4).joinToString("、").ifEmpty { "无" }}" +
-                                    if (entry.variants.size > 4) " 等${entry.variants.size}个" else "",
+                                "变体：${entry.variants.joinToString("、").ifBlank { "无" }}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -144,185 +143,89 @@ fun SettingsScreen() {
                     OutlinedTextField(
                         value = draftVariants,
                         onValueChange = { draftVariants = it },
-                        label = { Text("变体(逗号分隔)") },
+                        label = { Text("变体") },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.width(8.dp))
                     IconButton(onClick = {
                         val display = draftName.trim()
-                        if (display.isNotEmpty()) {
-                            val variants = draftVariants.split(',', '，').map { it.trim() }.filter { it.isNotEmpty() }
+                        if (display.isNotBlank()) {
+                            val variants = draftVariants.split(',', '，').map(String::trim).filter(String::isNotBlank)
                             saveSnap { repo.saveNameList(names + NameEntry(display, variants)) }
                             draftName = ""
                             draftVariants = ""
                         }
-                    }) { Icon(Icons.Filled.Add, contentDescription = "添加") }
+                    }) { Icon(Icons.Filled.Add, contentDescription = "添加姓名") }
                 }
-
                 Spacer(Modifier.height(8.dp))
-                Text("灵敏度档位", style = MaterialTheme.typography.titleSmall)
+                Text("识别灵敏度", style = MaterialTheme.typography.titleSmall)
                 RadioRow(
-                    options = listOf(
-                        "strict" to "严格",
-                        "standard" to "标准",
-                        "loose" to "宽松",
-                    ),
+                    options = listOf("strict" to "严格", "standard" to "标准", "loose" to "宽松"),
                     selected = preset,
-                ) { saveSnap { repo.saveSensitivityPreset(it) } }
-
+                    onSelect = { saveSnap { repo.saveSensitivityPreset(it) } },
+                )
                 Spacer(Modifier.height(8.dp))
-                var roll by remember { mutableFloatStateOf(rollcallSec.toFloat()) }
+                var roll by remember(rollcallSec) { mutableFloatStateOf(rollcallSec.toFloat() / 1000f) }
                 SliderRow(
                     title = "点名抑制窗口",
-                    valueLabel = "${roll.roundToInt()} 秒",
+                    valueLabel = "${roll.toInt()} 秒",
                     value = roll,
                     range = 10f..300f,
                     onValueChange = { roll = it },
-                    onValueChangeFinished = { saveSnap { repo.saveRollcallSuppressMs(roll.roundToInt() * 1000L) } },
+                    onValueChangeFinished = { saveSnap { repo.saveRollcallSuppressMs(roll.toInt() * 1000L) } },
                 )
-            }
-        }
-
-        // ================= 2. 提问 =================
-        item {
-            SectionCard("提问") {
-                Text("触发词等级：${levelLabel(qLevel)}", style = MaterialTheme.typography.titleSmall)
+                var question by remember(questionSec) { mutableFloatStateOf(questionSec.toFloat() / 1000f) }
+                SliderRow(
+                    title = "提问抑制窗口",
+                    valueLabel = "${question.toInt()} 秒",
+                    value = question,
+                    range = 30f..600f,
+                    onValueChange = { question = it },
+                    onValueChangeFinished = { saveSnap { repo.saveQuestionSuppressMs(question.toInt() * 1000L) } },
+                )
+                Text("问题触发词：${levelLabel(qLevel)}", style = MaterialTheme.typography.bodyMedium)
                 RadioRow(
                     options = listOf("1" to "少", "2" to "中", "3" to "多"),
                     selected = qLevel.toString(),
-                ) { saveSnap { repo.saveQuestionWordLevel(it.toInt()) } }
-
-                Spacer(Modifier.height(8.dp))
-                var qSec by remember { mutableFloatStateOf(questionSec.toFloat()) }
-                SliderRow(
-                    title = "提问抑制窗口",
-                    valueLabel = "${qSec.roundToInt()} 秒",
-                    value = qSec,
-                    range = 30f..600f,
-                    onValueChange = { qSec = it },
-                    onValueChangeFinished = { saveSnap { repo.saveQuestionSuppressMs(qSec.roundToInt() * 1000L) } },
+                    onSelect = { saveSnap { repo.saveQuestionWordLevel(it.toInt()) } },
                 )
             }
         }
 
-        // ================= 3. 语音 =================
-        item {
-            SectionCard("语音") {
-                var vad by remember { mutableFloatStateOf(vadDb.toFloat()) }
-                SliderRow(
-                    title = "VAD 静音阈值",
-                    valueLabel = "${vad.roundToInt()} dB",
-                    value = vad,
-                    range = -55f..-20f,
-                    onValueChange = { vad = it },
-                    onValueChangeFinished = { saveSnap { repo.saveVadDb(vad.roundToInt()) } },
-                )
-                Spacer(Modifier.height(4.dp))
-                var seg by remember { mutableFloatStateOf(segmentMax.toFloat()) }
-                SliderRow(
-                    title = "分段最长时长",
-                    valueLabel = "${seg.roundToInt()} 秒",
-                    value = seg,
-                    range = 1f..10f,
-                    onValueChange = { seg = it },
-                    onValueChangeFinished = { saveSnap { repo.saveSegmentMaxSec(seg.roundToInt()) } },
-                )
-                Spacer(Modifier.height(4.dp))
-                Text("ASR 引擎", style = MaterialTheme.typography.bodyMedium)
-                DropdownRow(
-                    options = listOf(
-                        "telespeech" to "TeleSpeech（电信，推荐）",
-                        "xunfei" to "讯飞 RTASR（流式）",
-                        "sensevoice" to "SenseVoice（兜底）",
-                    ),
-                    selected = asrEngine,
-                ) { saveSnap { repo.saveAsrEngine(it) } }
-                Spacer(Modifier.height(8.dp))
-                var asrKey by remember { mutableStateOf("") }
-                // P0 修复(2026-08-16 CC审查): 冷启动空快照不得覆盖已存 ASR key
-                var asrTouched by remember { mutableStateOf(false) }
-                LaunchedEffect(asrKey) {
-                    if (!asrTouched) {
-                        asrTouched = true
-                        return@LaunchedEffect
-                    }
-                    delay(400)
-                    runCatching { repo.saveAsrSiliconKey(asrKey.trim()) }
-                        .onFailure { e -> println("[Settings] ASR key 保存失败: ${e.message}") }
-                }
-                LaunchedEffect(Unit) {
-                    delay(800) // 等 MainActivity 的 load() 完成
-                    val current = AppConfig.siliconApiKey
-                    if (current.isNotEmpty()) asrKey = current
-                }
-                OutlinedTextField(
-                    value = asrKey,
-                    onValueChange = { asrKey = it },
-                    label = { Text("硅基流动 ASR Key（转写用）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-
-        // ================= 4. 提醒 =================
         item {
             SectionCard("提醒") {
-                SwitchRow("震动提醒", checked = chVibrate) { saveSnap { repo.setChannelEnabled(Channels.VIBRATE, it) } }
-                SwitchRow("铃声提醒", checked = chRingtone) { saveSnap { repo.setChannelEnabled(Channels.RINGTONE, it) } }
+                SwitchRow("振动提醒", checked = chVibrate) { saveSnap { repo.setChannelEnabled(Channels.VIBRATE, it) } }
                 SwitchRow("系统通知", checked = chNotify) { saveSnap { repo.setChannelEnabled(Channels.NOTIFY, it) } }
-                SwitchRow("全屏闪屏", "锁屏亮屏大字提醒", checked = chFlash) { saveSnap { repo.setChannelEnabled(Channels.FLASH, it) } }
-                SwitchRow("耳机提示音", checked = chEar) { saveSnap { repo.setChannelEnabled(Channels.EAR, it) } }
-                SwitchRow("锁屏通知", "锁屏界面显示提醒", checked = lockscreenNotify) { saveSnap { repo.saveLockscreenNotify(it) } }
-
+                Text(
+                    "答案通过系统通知显示；锁屏内容固定隐藏，不提供会改变隐私契约的开关。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(8.dp))
                 Text("震动模式", style = MaterialTheme.typography.titleSmall)
                 RadioRow(
                     options = listOf("gentle" to "轻柔", "normal" to "标准", "strong" to "强震"),
                     selected = vibrateMode,
-                ) { saveSnap { repo.saveVibrationMode(it) } }
-
-                Spacer(Modifier.height(8.dp))
-                var vol by remember { mutableFloatStateOf(ringtoneVolume.toFloat()) }
-                SliderRow(
-                    title = "铃声音量",
-                    valueLabel = "${vol.roundToInt()}%",
-                    value = vol,
-                    range = 0f..100f,
-                    onValueChange = { vol = it },
-                    onValueChangeFinished = { saveSnap { repo.saveRingtoneVolume(vol.roundToInt()) } },
+                    onSelect = { saveSnap { repo.saveVibrationMode(it) } },
+                )
+                val notificationGranted = android.os.Build.VERSION.SDK_INT < 33 ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+                Text(
+                    if (notificationGranted) "通知权限：已授权" else "通知权限：请在系统设置中授权",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        // ================= 5. AI =================
         item {
-            SectionCard("AI") {
-                var baseUrl by remember { mutableStateOf(ai.baseUrl) }
-                var apiKey by remember { mutableStateOf(ai.apiKey) }
-                var model by remember { mutableStateOf(ai.model) }
-                // P0 修复(2026-08-16 CC审查): 冷启动快照不得覆盖已存配置
-                // ①首帧(快照值)不触发保存 ②flow 发射真实值后同步字段
-                var aiTouched by remember { mutableStateOf(false) }
-                LaunchedEffect(baseUrl, apiKey, model) {
-                    if (!aiTouched) {
-                        aiTouched = true
-                        return@LaunchedEffect
-                    }
-                    delay(400)
-                    runCatching { repo.saveAiSettings(AiSettings(baseUrl.trim(), apiKey.trim(), model.trim())) }
-                        .onFailure { e -> println("[Settings] AI 保存失败: ${e.message}") }
-                }
-                var aiSynced by remember { mutableStateOf(false) }
-                LaunchedEffect(ai) {
-                    if (!aiSynced && (ai.baseUrl.isNotEmpty() || ai.apiKey.isNotEmpty() || ai.model.isNotEmpty())) {
-                        baseUrl = ai.baseUrl
-                        apiKey = ai.apiKey
-                        model = ai.model
-                        aiSynced = true
-                    }
-                }
+            SectionCard("AI 答题") {
+                var baseUrl by remember(ai.baseUrl) { mutableStateOf(ai.baseUrl) }
+                var apiKey by remember(ai.apiKey) { mutableStateOf(ai.apiKey) }
+                var model by remember(ai.model) { mutableStateOf(ai.model) }
+                var visible by remember { mutableStateOf(false) }
+                var message by rememberSaveable { mutableStateOf<String?>(null) }
                 OutlinedTextField(
                     value = baseUrl,
                     onValueChange = { baseUrl = it },
@@ -336,6 +239,15 @@ fun SettingsScreen() {
                     onValueChange = { apiKey = it },
                     label = { Text("API Key") },
                     singleLine = true,
+                    visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { visible = !visible }) {
+                            Icon(
+                                if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = if (visible) "隐藏 API Key" else "显示 API Key",
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -346,96 +258,113 @@ fun SettingsScreen() {
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
-                        baseUrl = "https://api.deepseek.com"
-                        model = "deepseek-v4-flash"
-                    }) { Text("DeepSeek 官方预设") }
+                        baseUrl = AiProviderPreset.DEEPSEEK_OFFICIAL.baseUrl
+                        model = AiProviderPreset.DEEPSEEK_OFFICIAL.model
+                    }) { Text("DeepSeek") }
                     OutlinedButton(onClick = {
-                        baseUrl = "https://api.siliconflow.cn/v1"
-                        model = "deepseek-ai/DeepSeek-V4-Flash"
-                    }) { Text("硅基流动预设") }
+                        baseUrl = AiProviderPreset.SILICON_FLOW.baseUrl
+                        model = AiProviderPreset.SILICON_FLOW.model
+                    }) { Text("硅基流动") }
+                    OutlinedButton(onClick = {
+                        baseUrl = AiProviderPreset.COMMAND_CODE.baseUrl
+                        model = AiProviderPreset.COMMAND_CODE.model
+                    }) { Text("Command Code") }
                 }
-
+                Button(
+                    onClick = {
+                        val error = AiProviderPreset.validationError(baseUrl, model)
+                        if (error == null) {
+                            saveSnap {
+                                repo.saveAiSettings(AiProviderPreset.normalizeSettings(AiSettings(baseUrl, apiKey, model)))
+                                message = "AI 配置已保存"
+                            }
+                        } else {
+                            message = aiSettingsValidationMessage(error)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("保存 AI 配置") }
+                message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 Spacer(Modifier.height(8.dp))
                 Text("回答长度", style = MaterialTheme.typography.titleSmall)
                 RadioRow(
                     options = listOf("short" to "简短", "mid" to "适中", "long" to "详细"),
                     selected = answerLength,
-                ) { saveSnap { repo.saveAnswerLength(it) } }
-
-                Spacer(Modifier.height(8.dp))
+                    onSelect = { saveSnap { repo.saveAnswerLength(it) } },
+                )
                 Text("答案风格", style = MaterialTheme.typography.titleSmall)
                 RadioRow(
                     options = listOf("terseness" to "口语化", "academic" to "要点化"),
                     selected = answerStyle,
-                ) { saveSnap { repo.saveAnswerStyle(it) } }
-
-                Spacer(Modifier.height(4.dp))
-                SwitchRow("流式输出", "逐字显示答案", checked = streamOutput) { saveSnap { repo.saveStreamOutput(it) } }
+                    onSelect = { saveSnap { repo.saveAnswerStyle(it) } },
+                )
+                SwitchRow("流式输出", "逐段显示答案", checked = streamOutput) { saveSnap { repo.saveStreamOutput(it) } }
             }
         }
 
-        // ================= 6. 总结 =================
         item {
-            SectionCard("总结") {
-                SwitchRow("自动总结", "课后自动生成课堂摘要", checked = autoSummary) { saveSnap { repo.saveAutoSummary(it) } }
-            }
-        }
-
-        // ================= 7. 数据 =================
-        item {
-            SectionCard("数据") {
-                Text("历史保留", style = MaterialTheme.typography.bodyMedium)
-                DropdownRow(
-                    options = listOf(
-                        "7" to "7 天",
-                        "30" to "30 天",
-                        "90" to "90 天",
-                        "forever" to "永久保留",
-                    ),
-                    selected = retentionDays,
-                ) { saveSnap { repo.saveRetentionDays(it) } }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { println("[Settings] 清空历史（占位：待历史库接入）") },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("清空历史记录（占位）") }
-            }
-        }
-
-        // ================= 8. 隐私 =================
-        item {
-            SectionCard("隐私") {
+            SectionCard("本地转写") {
+                Text("sherpa-onnx Zipformer 中文 14M", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "数据流向说明：\n" +
-                        "· 名字表、灵敏度、AI Key 等全部设置仅保存在本机 DataStore，不上传任何服务器；\n" +
-                        "· 转写文本仅发往你配置的 ASR 引擎用于识别；\n" +
-                        "· 提问答案仅发往你配置的 LLM 服务；\n" +
-                        "· 通知/悬浮窗/麦克风权限仅在本应用内使用，可随时在系统设置中撤销。",
-                    style = MaterialTheme.typography.bodyMedium,
+                    if (localAsrModelReady(context.filesDir)) "模型已就绪，实时转写不会上传音频"
+                    else "模型将在首次开始监听时安装到应用私有目录",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        // ================= 9. 通用 =================
         item {
-            SectionCard("通用") {
+            SectionCard("数据与通用") {
+                OutlinedButton(onClick = { showClearDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("清空问答历史")
+                }
+                clearMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(8.dp))
                 Text("深色模式", style = MaterialTheme.typography.bodyMedium)
                 DropdownRow(
                     options = listOf("system" to "跟随系统", "on" to "深色", "off" to "浅色"),
                     selected = darkMode,
-                ) { saveSnap { repo.saveDarkMode(it) } }
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { showSelfTest = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("进入自检调试页")
-                }
+                    onSelect = { saveSnap { repo.saveDarkMode(it) } },
+                )
             }
         }
     }
+
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = { Text("确认清空问答历史？") },
+            text = { Text("只删除问答卡，不删除姓名设置或本地模型。此操作无法撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearDialog = false
+                    scope.launch {
+                        try {
+                            clearMessage = "已清空 ${answerHistory.clearHistory()} 条问答"
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            clearMessage = "清空问答历史失败，请重试"
+                        }
+                    }
+                }) { Text("确认清空") }
+            },
+            dismissButton = { TextButton(onClick = { showClearDialog = false }) { Text("取消") } },
+        )
+    }
 }
+
+/** The UI must start from the AI repository default, never from an ASR setting. */
+internal fun defaultAiSettingsForUi(): AiSettings = SettingsRepository.DEFAULT_AI_SETTINGS
+
+/** Only execute the destructive action after an explicit confirmation. */
+internal suspend fun <T> clearHistoryIfConfirmed(confirmed: Boolean, clear: suspend () -> T): T? =
+    if (confirmed) clear() else null
 
 private fun levelLabel(level: Int): String = when (level) {
     1 -> "少（1级）"
@@ -443,9 +372,11 @@ private fun levelLabel(level: Int): String = when (level) {
     else -> "多（3级）"
 }
 
-// ----------------------------------------------------------------------
-// 通用小组件
-// ----------------------------------------------------------------------
+private fun aiSettingsValidationMessage(code: String): String = when (code) {
+    "BASE_URL_HTTPS_REQUIRED" -> "Base URL 必须使用 https://"
+    "MODEL_BLANK" -> "模型不能为空"
+    else -> "请检查 Base URL 和模型"
+}
 
 @Composable
 internal fun SectionCard(title: String, content: @Composable () -> Unit) {
@@ -460,15 +391,10 @@ internal fun SectionCard(title: String, content: @Composable () -> Unit) {
 
 @Composable
 private fun SwitchRow(title: String, subtitle: String? = null, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
@@ -481,7 +407,7 @@ private fun SliderRow(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     onValueChange: (Float) -> Unit,
-    onValueChangeFinished: (() -> Unit)? = null,
+    onValueChangeFinished: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -496,10 +422,7 @@ private fun SliderRow(
 private fun RadioRow(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { (value, label) ->
-            Row(
-                Modifier.weight(1f).clickable { onSelect(value) },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            Row(Modifier.weight(1f).clickable { onSelect(value) }, verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(selected = value == selected, onClick = { onSelect(value) })
                 Text(label, style = MaterialTheme.typography.bodyMedium)
             }
@@ -510,25 +433,14 @@ private fun RadioRow(options: List<Pair<String, String>>, selected: String, onSe
 @Composable
 private fun DropdownRow(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Box {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    options.firstOrNull { it.first == selected }?.second ?: selected,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { (value, display) ->
-                    DropdownMenuItem(
-                        text = { Text(display) },
-                        onClick = {
-                            expanded = false
-                            onSelect(value)
-                        },
-                    )
-                }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(options.firstOrNull { it.first == selected }?.second ?: selected, modifier = Modifier.weight(1f))
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, display) ->
+                DropdownMenuItem(text = { Text(display) }, onClick = { expanded = false; onSelect(value) })
             }
         }
     }

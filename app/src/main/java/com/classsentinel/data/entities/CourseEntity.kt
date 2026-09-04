@@ -5,7 +5,7 @@ import androidx.room.PrimaryKey
 
 /**
  * 一次听讲课程（每次 START 建一行，STOP 时写 endTs）。
- * 待办：summaryMd 由后续 Phase 的 AI 总结回填。
+ * summaryMd 由 SummaryWorker 按课程总结任务回填。
  */
 @Entity(tableName = "courses")
 data class CourseEntity(
@@ -18,4 +18,7 @@ data class CourseEntity(
     val endTs: Long? = null,
     /** Markdown 总结，未总结为 null */
     val summaryMd: String? = null,
+    val status: String = "COMPLETED",
+    val summaryStatus: String = "NONE",
+    val summaryError: String? = null,
 )

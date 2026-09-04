@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import com.classsentinel.core.detect.ClassEvent
 import com.classsentinel.core.detect.EventType
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -11,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AlertCoordinatorTest {
 
     // fake 通道不会触碰 context；ContextWrapper 是 mockable jar 中唯一可凭空实例化的 Context

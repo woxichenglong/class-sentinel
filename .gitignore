@@ -8,3 +8,24 @@ captures/
 .externalNativeBuild/
 .cxx/
 app/build/
+
+# ================= 敏感文件/凭证排除规则 =================
+# 以下路径含密钥或凭据，一律不得提交到版本库（仅本地使用）。
+
+# 环境变量文件：.env 及 .env.local、.env.prod 等变体，含 API Key 等敏感配置，不得提交
+.env
+.env.*
+
+# Android 签名文件：keystore / JKS / PKCS12，用于 APK 签名，泄露可被冒签，不得提交
+*.keystore
+*.jks
+*.p12
+
+# 证书与私钥：TLS 证书、PEM 私钥、密钥文件，含私钥材料，不得提交
+*.pem
+*.key
+
+# 凭据目录：存放 token、config 等敏感信息的整目录，不得提交
+credentials/
+secrets/
+.worktrees/

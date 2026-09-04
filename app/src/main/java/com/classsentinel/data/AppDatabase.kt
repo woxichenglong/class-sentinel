@@ -6,16 +6,25 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.classsentinel.data.entities.CourseEntity
 import com.classsentinel.data.entities.EventEntity
+import com.classsentinel.data.entities.PendingAudioEntity
+import com.classsentinel.data.entities.StudyArtifactEntity
 import com.classsentinel.data.entities.TranscriptChunkEntity
 
 /**
- * 应用数据库：课程 / 课堂事件 / 转写块。
- * version 1 首次发布；exportSchema=false 不做 schema 导出。
+ * 应用数据库：课程 / 课堂事件 / 转写块 / 待上传音频段。
+ * version 1 首次发布；version 2 新增 pending_audio_segments 表；version 3 新增学习产物表。
+ * exportSchema=true，导出 Room schema。
  */
 @Database(
-    entities = [CourseEntity::class, EventEntity::class, TranscriptChunkEntity::class],
-    version = 1,
-    exportSchema = false,
+    entities = [
+        CourseEntity::class,
+        EventEntity::class,
+        TranscriptChunkEntity::class,
+        PendingAudioEntity::class,
+        StudyArtifactEntity::class,
+    ],
+    version = 3,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -24,6 +33,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
 
     abstract fun transcriptDao(): TranscriptDao
+
+    abstract fun pendingAudioDao(): PendingAudioDao
+
+    abstract fun studyArtifactDao(): StudyArtifactDao
 
     companion object {
         @Volatile
@@ -36,7 +49,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "class_sentinel.db",
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }

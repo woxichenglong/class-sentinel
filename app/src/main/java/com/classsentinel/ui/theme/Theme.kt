@@ -9,6 +9,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import java.util.Locale
 
 private val LightColors = lightColorScheme(
     primary = Blue40,
@@ -41,4 +42,11 @@ fun ClassSentinelTheme(
         typography = Typography,
         content = content,
     )
+}
+
+/** 设置页深色模式的纯决策：未知值安全回退为跟随系统。 */
+internal fun darkThemeForPreference(mode: String, systemIsDark: Boolean): Boolean = when (mode.trim().lowercase(Locale.ROOT)) {
+    "on" -> true
+    "off" -> false
+    else -> systemIsDark
 }

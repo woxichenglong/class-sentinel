@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- 应用数据包含课堂内容与密钥材料，旧版云备份/ADB 备份全部排除。 -->
+    <exclude domain="root" path="." />
+</full-backup-content>

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.json.JSONArray
 
 class NameMatcherTest {
 
@@ -53,5 +54,33 @@ class NameMatcherTest {
     @Test
     fun `empty names never hit`() {
         assertNull(NameMatcher(emptyList()).detect("张伟，你来回答", Sensitivity.LOOSE))
+    }
+
+    @Test
+    fun `labeled corpus reports false positive and false negative counts`() {
+        val raw = requireNotNull(javaClass.classLoader?.getResource("name_matcher_corpus.json"))
+            .readText()
+        val rows = JSONArray(raw)
+        val matcher = NameMatcher(
+            listOf(
+                NameEntry("张伟", listOf("张微", "张威", "zhang wei")),
+                NameEntry("王", emptyList()),
+                NameEntry("明", listOf("小明")),
+            ),
+        )
+        var falsePositives = 0
+        var falseNegatives = 0
+        repeat(rows.length()) { index ->
+            val row = rows.getJSONObject(index)
+            val text = row.getString("text")
+            val expected = if (row.isNull("expected")) null else row.getString("expected")
+            val actual = matcher.detect(text, Sensitivity.STANDARD)?.name
+            if (expected == null && actual != null) falsePositives++
+            if (expected != null && actual != expected) falseNegatives++
+        }
+
+        val counts = "false positives=$falsePositives false negatives=$falseNegatives"
+        assertEquals(counts, 0, falsePositives)
+        assertEquals(counts, 0, falseNegatives)
     }
 }

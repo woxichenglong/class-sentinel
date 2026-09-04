@@ -31,23 +31,43 @@ class VadSplitter(
     }
 
     fun split(pcm: Flow<ShortArray>): Flow<ByteArray> = flow {
+        segments(pcm).collect { emit(it.bytes) }
+    }
+
+    /**
+     * 带元数据的分段流：稳定单调 id（s1/s2/…）、基于采样率换算的
+     * [WavSegment.startOffsetMs]/[endOffsetMs]、44 字节 WAV 头 + PCM16。
+     *
+     * 计数生命周期：segmentCounter / sessionStartMs 都是本函数每次收集时
+     * 新建的局部状态 —— 同一 splitter 实例的多次收集（如测试中重复 toList()）
+     * 各自从 s1/0ms 开始，不跨调用漂移；同一收集内单调递增。
+     * 阈值为 40ms 帧：静音 ≥ minSilenceMs 或累计 ≥ maxSegmentMs 即 flush。
+     */
+    fun segments(pcm: Flow<ShortArray>): Flow<WavSegment> = flow {
         val acc = mutableListOf<Short>()
         var silenceMs = 0
         var accMs = 0
         val frameSize = sampleRate * 40 / 1000 // 40ms 帧
         var noiseFloor = -50.0 // 噪声基线（静音帧指数滑动平均）
         var adaptCount = 0
+        // session 局部计数：每次收集重置（s1 起），不跨调用漂移
+        var segmentCounter = 0
+        var sessionStartMs = 0L
+        var segmentStartMs = 0L
         pcm.collect { chunk ->
             var offset = 0
             while (offset < chunk.size) {
                 val end = minOf(offset + frameSize, chunk.size)
                 val frame = chunk.copyOfRange(offset, end)
                 offset = end
+                // 先推进会话时钟，flush 时 endOffsetMs 已含本帧
+                sessionStartMs += frame.size * 1000 / sampleRate
                 val db = rmsDb(frame)
                 // 自适应阈值：噪声基线+12dB 与固定阈值取更敏感者。课堂远场语音也能过。
                 val threshold = minOf(noiseFloor + voiceBoostDb, silenceDb.toDouble())
                 val voiced = db >= threshold
                 if (voiced) {
+                    if (acc.isEmpty()) segmentStartMs = sessionStartMs - frame.size * 1000L / sampleRate // 本段第一个有声帧的位置
                     acc += frame.toList()
                     accMs += frame.size * 1000 / sampleRate
                     silenceMs = 0
@@ -64,14 +84,29 @@ class VadSplitter(
                     }
                 }
                 if (acc.isNotEmpty() && (silenceMs >= minSilenceMs || accMs >= maxSegmentMs)) {
-                    emit(wavBytes(acc))
+                    emit(segment(acc, segmentCounter++, segmentStartMs, sessionStartMs))
                     acc.clear()
                     silenceMs = 0
                     accMs = 0
                 }
             }
         }
-        if (acc.isNotEmpty()) emit(wavBytes(acc))
+        if (acc.isNotEmpty()) emit(segment(acc, segmentCounter++, segmentStartMs, sessionStartMs))
+    }
+
+    /** 把累积样本打包成 WavSegment：id 单调、offset 按采样率换算、WAV 头由 [wavBytes] 生成。 */
+    private fun segment(
+        samples: List<Short>,
+        index: Int,
+        startOffsetMs: Long,
+        endOffsetMs: Long,
+    ): WavSegment {
+        return WavSegment(
+            id = "s${index + 1}",
+            startOffsetMs = startOffsetMs,
+            endOffsetMs = endOffsetMs,
+            bytes = wavBytes(samples),
+        )
     }
 
     /** PCM16 → 44 字节头 WAV */

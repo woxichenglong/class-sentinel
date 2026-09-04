@@ -56,6 +56,22 @@ class NameMatcher private constructor(
         return best?.let { contextGate(segment, it, sensitivity) }
     }
 
-    private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity): Hit? =
-        if (!sensitivity.contextRequired || contextWords.any { segment.contains(it) }) hit else null
+    private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity): Hit? {
+        if (sensitivity.contextRequired && contextWords.none { segment.contains(it) }) return null
+        // 单字符命中必须处于点名边界，否则「王国来回答/明天来回答」里的 王/明 会被误判为点名
+        if (hit.matched.length == 1 && !isCallBoundary(segment, hit.matched)) return null
+        return hit
+    }
+
+    /** 单字符命中是否处于点名边界：前置不是连续字（未被更长词嵌入），且后缀为空/空白/标点/指令词。 */
+    private fun isCallBoundary(segment: String, ch: String): Boolean {
+        val index = segment.indexOf(ch)
+        if (index < 0) return false
+        if (index > 0 && segment[index - 1].isLetterOrDigit()) return false
+        val suffix = segment.substring(index + ch.length)
+        if (suffix.isEmpty()) return true
+        val head = suffix.first()
+        if (head.isWhitespace() || !head.isLetterOrDigit()) return true
+        return contextWords.any { suffix.startsWith(it) }
+    }
 }

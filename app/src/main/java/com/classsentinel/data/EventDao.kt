@@ -20,6 +20,19 @@ interface EventDao {
     @Query("SELECT * FROM events WHERE courseId = :courseId ORDER BY ts ASC")
     suspend fun getForCourse(courseId: Long): List<EventEntity>
 
+    /** 学生问答历史：只返回可回答的 QUESTION 事件，最新在前。 */
+    @Query("SELECT * FROM events WHERE type = 'QUESTION' ORDER BY ts DESC")
+    suspend fun getQuestionEvents(): List<EventEntity>
+
+    @Query("SELECT * FROM events WHERE id = :eventId AND type = 'QUESTION' LIMIT 1")
+    suspend fun getQuestionById(eventId: Long): EventEntity?
+
+    @Query("SELECT * FROM events WHERE type = 'QUESTION' ORDER BY ts DESC")
+    fun observeQuestionEvents(): Flow<List<EventEntity>>
+
+    @Query("DELETE FROM events WHERE type = 'QUESTION'")
+    suspend fun clearQuestionEvents(): Int
+
     @Query("SELECT * FROM events WHERE courseId = :courseId ORDER BY ts ASC")
     fun observeForCourse(courseId: Long): Flow<List<EventEntity>>
 
@@ -33,6 +46,9 @@ interface EventDao {
 
     @Query("SELECT COUNT(*) FROM events")
     suspend fun countAll(): Int
+
+    @Query("DELETE FROM events WHERE courseId = :courseId")
+    suspend fun deleteForCourse(courseId: Long): Int
 
     @Query("DELETE FROM events")
     suspend fun clearAll()

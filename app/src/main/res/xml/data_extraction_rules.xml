@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Android 12+ 云备份不携带课堂数据库、设置或应用私有音频。 -->
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Android 12+ 设备迁移同样不复制本应用的敏感本地数据。 -->
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import com.classsentinel.core.config.AppConfig
+import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -39,12 +41,18 @@ class SettingsRepositoryTest {
     private lateinit var savedNames: List<NameEntry>
     private lateinit var savedSensitivity: Sensitivity
     private lateinit var savedChannels: Set<String>
+    private var savedLockscreenNotify: Boolean = true
+    private var savedVibrationMode: String = "normal"
+    private lateinit var secretStore: InMemorySecretStore
 
     @Before
     fun setUp() {
         savedNames = AppConfig.names.value
         savedSensitivity = AppConfig.sensitivity.value
         savedChannels = AppConfig.enabledChannels.value
+        savedLockscreenNotify = AppConfig.lockscreenNotify.value
+        savedVibrationMode = AppConfig.vibrationMode.value
+        secretStore = InMemorySecretStore()
 
         file = File.createTempFile("settings-test", ".preferences_pb")
         file.deleteOnExit()
@@ -61,13 +69,16 @@ class SettingsRepositoryTest {
         AppConfig.names.value = savedNames
         AppConfig.sensitivity.value = savedSensitivity
         AppConfig.enabledChannels.value = savedChannels
+        AppConfig.lockscreenNotify.value = savedLockscreenNotify
+        AppConfig.vibrationMode.value = savedVibrationMode
         AppConfig.siliconApiKey = ""
         AppConfig.xunfeiAppId = ""
         AppConfig.xunfeiApiKey = ""
         AppConfig.xunfeiApiSecret = ""
     }
 
-    private fun repo(sync: Boolean = false) = SettingsRepository(dataStore, syncEnabled = sync)
+    private fun repo(sync: Boolean = false) =
+        SettingsRepository(dataStore, secretStore = secretStore, syncEnabled = sync)
 
     @Test
     fun `保存后新实例 load 回读全部核心设置并写入 AppConfig`() = runBlocking {
@@ -194,5 +205,38 @@ class SettingsRepositoryTest {
         // 未知通道 key 静默忽略
         r.setChannelEnabled("unknown", true)
         assertEquals(setOf("notify", "ringtone"), AppConfig.enabledChannels.value)
+    }
+
+    @Test
+    fun `提醒细节保存后回写 AppConfig 且新实例 load 可恢复`() = runBlocking {
+        val r = repo()
+        r.load()
+
+        r.saveLockscreenNotify(false)
+        r.saveVibrationMode("strong")
+
+        assertFalse(AppConfig.lockscreenNotify.value)
+        assertEquals("strong", AppConfig.vibrationMode.value)
+
+        val repo2 = repo()
+        repo2.load()
+        assertFalse(AppConfig.lockscreenNotify.value)
+        assertEquals("strong", AppConfig.vibrationMode.value)
+        assertFalse(repo2.lockscreenNotifyFlow.first())
+        assertEquals("strong", repo2.vibrationModeFlow.first())
+    }
+
+    @Test
+    fun `音频保留策略默认最小留存并规范化保存值`() = runBlocking {
+        val r = repo()
+        r.load()
+
+        assertEquals(AudioRetentionPolicy.DEFAULT.storedValue, r.audioRetentionPolicyFlow.first())
+        r.saveAudioRetentionPolicy("FULL_SESSION")
+        assertEquals(AudioRetentionPolicy.FULL_SESSION.storedValue, r.audioRetentionPolicyFlow.first())
+
+        // 未知值不能让运行时进入未定义策略，安全回退到 FAILED_ONLY。
+        r.saveAudioRetentionPolicy("future-policy")
+        assertEquals(AudioRetentionPolicy.DEFAULT.storedValue, r.audioRetentionPolicyFlow.first())
     }
 }

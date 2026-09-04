@@ -14,8 +14,8 @@ android {
         applicationId = "com.classsentinel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -37,9 +37,36 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+    packaging {
+        jniLibs {
+            // 第三方预编译库不接受当前 strip 工具；显式保留符号，避免构建时重复误报。
+            keepDebugSymbols += setOf(
+                "**/libandroidx.graphics.path.so",
+                "**/libdatastore_shared_counter.so",
+                "**/libonnxruntime.so",
+                "**/libsherpa-onnx-c-api.so",
+                "**/libsherpa-onnx-cxx-api.so",
+                "**/libsherpa-onnx-jni.so",
+            )
+        }
+    }
+    lint {
+        // 依赖版本刻意与已验证的 Kotlin/AGP/WorkManager 组合锁定；升级需单独回归。
+        disable += "GradleDependency"
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
+    // Offline continuous ASR runtime pinned by the streaming-ASR plan.
+    implementation(files("libs/sherpa-onnx-1.13.7.aar"))
+
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.material3:material3")
@@ -65,6 +92,9 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // WorkManager（2.9.1：保守兼容 minSdk 26；升级到 2.11.x 需单独验证调度行为）
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
     // 拼音（点名模糊匹配）——原版 promeg 只发 jcenter(已死)，用 biezhi fork（Maven Central，API 同源）
     implementation("io.github.biezhi:TinyPinyin:2.0.3.RELEASE")
 
@@ -78,4 +108,6 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     // JVM 单测下 org.json 是 Android stub(not mocked)，用真实现覆盖
     testImplementation("org.json:json:20240303")
+    // WorkManager 测试支持（Task 16）
+    testImplementation("androidx.work:work-testing:2.9.1")
 }

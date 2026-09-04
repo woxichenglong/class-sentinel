@@ -2,12 +2,17 @@ package com.classsentinel.core.summary
 
 import com.classsentinel.core.llm.LlmClient
 import com.classsentinel.core.llm.LlmConfig
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -73,5 +78,53 @@ class SummaryGeneratorTest {
         val first = server.takeRequest()
         val firstBody = first.body.readUtf8()
         assertTrue(firstBody.contains("压缩成要点摘要"))
+    }
+
+    @Test
+    fun `blank transcript returns no content without calling llm`() = runTest {
+        val result = SummaryGenerator(LlmClient()).generateResult("  \n\t", cfgWithServer())
+
+        assertEquals(SummaryGenerationResult.NoContent, result)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `failed partial chunk returns failed and never invents final summary`() = runTest {
+        val longer = "傅里叶变换".repeat(900)
+        server.enqueue(MockResponse().setResponseCode(500).setBody("provider failure"))
+
+        val result = SummaryGenerator(LlmClient()).generateResult(longer, cfgWithServer())
+
+        assertEquals(SummaryGenerationResult.Failed("GENERATION_FAILED"), result)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `cancellation during a partial chunk prevents subsequent chunk calls`() = runTest {
+        val longer = "傅里叶变换".repeat(900)
+        val calls = mutableListOf<String>()
+        val firstStarted = CompletableDeferred<Unit>()
+        val generator = SummaryGenerator(
+            streamChat = { messages, _ ->
+                calls += messages.last()["content"].orEmpty()
+                kotlinx.coroutines.flow.flow {
+                    emit("块一")
+                    firstStarted.complete(Unit)
+                    awaitCancellation()
+                }
+            },
+        )
+
+        val task = async { generator.generateResult(longer, cfg) }
+        firstStarted.await()
+        task.cancel()
+        try {
+            task.await()
+            fail("cancellation must propagate")
+        } catch (_: CancellationException) {
+            // expected: cancellation must not be converted to a failed summary
+        }
+
+        assertEquals(1, calls.size)
     }
 }

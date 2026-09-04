@@ -22,4 +22,8 @@ object AppConfig {
 
     // ---- 启用的提醒通道 ----
     val enabledChannels = MutableStateFlow<Set<String>>(setOf("vibrate", "notify"))
+
+    // ---- 提醒细节（热更新）----
+    val lockscreenNotify = MutableStateFlow(true)
+    val vibrationMode = MutableStateFlow("normal")
 }

@@ -2,6 +2,7 @@ package com.classsentinel.core.detect
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -56,5 +57,52 @@ class EventEngineTest {
         flow.value = Sensitivity.LOOSE
         val e = eng.process("张伟", ts = 70_000) // LOOSE 无需上下文 → 命中
         assertEquals(EventType.ROLLCALL, e?.type)
+    }
+
+    @Test
+    fun `name final followed by question final creates one direct question`() {
+        val eng = engine()
+
+        assertNull(eng.processFinal(FinalTranscript(1, "张伟", 0L, 1_000L), ts = 1_000))
+        val event = eng.processFinal(
+            FinalTranscript(2, "你来回答这个问题", 1_000L, 2_000L),
+            ts = 2_000,
+        )
+
+        assertNotNull(event)
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.DIRECT, event?.scope)
+        assertEquals("你来回答这个问题", event?.triggerText)
+        assertEquals("张伟\n你来回答这个问题", event?.context)
+        assertNull(
+            eng.processFinal(
+                FinalTranscript(2, "你来回答这个问题", 1_000L, 2_000L),
+                ts = 2_100,
+            ),
+        )
+    }
+
+    @Test
+    fun `open question and explicit class invitation create class open scope`() {
+        val open = engine().processFinal(
+            FinalTranscript(1, "为什么这个结论成立", 0L, 1_000L),
+            ts = 1_000,
+        )
+        assertEquals(EventType.QUESTION, open?.type)
+        assertEquals(EventScope.CLASS_OPEN, open?.scope)
+
+        val invitation = engine().processFinal(
+            FinalTranscript(1, "有没有同学来回答", 0L, 1_000L),
+            ts = 1_000,
+        )
+        assertEquals(EventType.QUESTION, invitation?.type)
+        assertEquals(EventScope.CLASS_OPEN, invitation?.scope)
+    }
+
+    @Test
+    fun `binary confirmation and ordinary statement do not create answer event`() {
+        assertNull(engine().processFinal(FinalTranscript(1, "这个结论对不对", 0L, 1_000L), ts = 1_000))
+        assertNull(engine().processFinal(FinalTranscript(2, "是不是这样", 1_000L, 2_000L), ts = 2_000))
+        assertNull(engine().processFinal(FinalTranscript(3, "大家先看书十分钟", 2_000L, 3_000L), ts = 3_000))
     }
 }

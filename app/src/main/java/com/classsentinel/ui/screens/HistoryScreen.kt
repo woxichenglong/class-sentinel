@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,109 +17,134 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.classsentinel.data.AnswerCard
+import com.classsentinel.data.AnswerHistoryRepository
 import com.classsentinel.data.AppDatabase
-import com.classsentinel.data.CourseSummary
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-/**
- * 历史记录：课程列表（按 startTs 倒序），每项显示 日期时间、时长、事件数。
- * 从 CourseDao 的 Flow 收集，无数据时显示空态。
- */
+/** Student-facing history: answer cards grouped by local calendar date. */
 @Composable
-fun HistoryScreen(onCourseClick: (Long) -> Unit = {}) {
+fun HistoryScreen(
+    onAnswerClick: (Long) -> Unit = {},
+    onRetry: (Long) -> Unit = {},
+) {
     val context = LocalContext.current
     val database = remember { AppDatabase.get(context) }
-    val summaries by remember {
-        database.courseDao().observeSummaries()
+    val repository = remember(database) { AnswerHistoryRepository(database.eventDao()) }
+    val cards by remember(repository) {
+        repository.observeCards()
     }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val timeFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
+    val groups = remember(cards) { repository.groupByDate(cards) }
 
-    if (summaries.isEmpty()) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("暂无课程记录", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "开始一次听讲后，课程与课堂事件会出现在这里",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+    if (groups.isEmpty()) {
+        EmptyAnswerHistory()
         return
     }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(summaries, key = { it.course.id }) { summary ->
-            CourseHistoryCard(
-                summary = summary,
-                timeFormat = timeFormat,
-                onClick = { onCourseClick(summary.course.id) },
-            )
+        item {
+            Column {
+                Text("问答历史", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "按日期回看课堂中真正触发的问答，依据可展开查看。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-    }
-}
-
-@Composable
-private fun CourseHistoryCard(
-    summary: CourseSummary,
-    timeFormat: SimpleDateFormat,
-    onClick: () -> Unit,
-) {
-    val course = summary.course
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = course.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Row(
-                modifier = Modifier.padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
+        groups.forEach { group ->
+            item(key = "date-${group.date}") {
                 Text(
-                    text = timeFormat.format(Date(course.startTs)),
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = group.date,
+                    style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
-                Text(
-                    text = formatDuration(course.startTs, course.endTs),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "事件 ${summary.eventCount}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            }
+            items(group.cards, key = { it.eventId }) { card ->
+                AnswerHistoryCard(
+                    card = card,
+                    onClick = { onAnswerClick(card.eventId) },
+                    onRetry = { onRetry(card.eventId) },
                 )
             }
         }
     }
 }
 
-/** 时长文案：未结束显示「进行中」，否则按 小时/分钟 展示 */
-private fun formatDuration(startTs: Long, endTs: Long?): String {
-    if (endTs == null) return "进行中"
-    val minutes = (endTs - startTs) / 60_000L
-    return if (minutes < 60) "${minutes}分钟" else "${minutes / 60}小时${minutes % 60}分"
+@Composable
+private fun EmptyAnswerHistory() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("暂无问答历史", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "开始一次课堂监听并识别到可回答的问题后，问答会按日期显示在这里。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun AnswerHistoryCard(
+    card: AnswerCard,
+    onClick: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    var expanded by rememberSaveable(card.eventId) { mutableStateOf(false) }
+    val presentation = answerCardPresentation(card, expanded = expanded)
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("问题", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    presentation.time,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(presentation.question, style = MaterialTheme.typography.bodyLarge)
+            Text("答案", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text(presentation.answer, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "依据：${presentation.context.ifBlank { "无" }}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "收起依据" else "展开依据")
+                }
+                if (card.answer.isNullOrBlank()) {
+                    TextButton(onClick = onRetry) { Text("重试") }
+                }
+            }
+        }
+    }
 }

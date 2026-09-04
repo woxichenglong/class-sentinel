@@ -1,123 +1,181 @@
 # 课堂哨兵 ClassSentinel
 
-> 大学课堂 AI 助手：后台听讲转写，老师点名/提问时多方式提醒 + AI 实时生成回答，课后四段式总结。Material Design 3 简洁风，纯 Kotlin + Jetpack Compose。
+> 大学课堂 AI 助手：后台听讲转写，老师点名/提问时提醒并生成回答，课后保存课程历史与可选总结。
+> 当前文档对应 **v0.3.0 Unreleased：可靠性、学习产物与音频工作流增量**。自动化质量门已跑通，K80 已完成安装/冷启动/权限 smoke；完整真机/MIUI 业务验收尚未完成。
 
-[English intro](#english)
+[English summary](#english)
 
-## 特性
+## 当前验证状态
 
-- 🎙️ **课堂实时转写**：前台服务持续录音 → 云端 ASR（默认免费引擎）→ 句子流
-- 🔔 **点名检测**：拼音模糊匹配（同音字/方言口音兜底）+ 上下文确认词，五通道提醒（震动/铃声/锁屏通知/全屏闪屏/耳机提示音）
-- ❓ **提问检测 + AI 答题**：触发词检测老师提问 → LLM 流式生成口语化答案 → 悬浮窗展示
-- 📚 **历史记录**：课程/转写全文/事件时间线全落库（Room），支持浏览
-- 📝 **课后总结**：转写全文 → 四段式 Markdown 总结（知识点/作业/考试重点/下节预告）
-- ⚙️ **完整设置**：灵敏度三档、抑制窗口、VAD、提醒通道独立开关、AI 源、深色模式
-- 🔬 **自检调试页**：权限矩阵、麦克风电平表、ASR/LLM 连通测试、模拟事件、运行日志
-- 🛡️ **隐私优先**：数据本地存储，云端仅发送匿名声音片段/问题文本
+这是源码和 JVM/构建证据，不等同于真实课堂或特定手机上的效果：
 
-## 工作原理
+| 检查 | 命令/依据 | 结果 |
+|---|---|---|
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 62 个测试套件、347 个用例；失败 0、错误 0、跳过 0 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，18,351,207 bytes；SHA-256：`b719c02be6157a3457acf3a621d75e257c2c07c5a2c12f66e609a0cc662adae0` |
+| 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 26 个，消费者 key 26 个，集合精确相等 |
+| Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
+| Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
+| Android Lint | `./gradlew :app:lintDebug --rerun-tasks` | 文本报告为 `No issues found.` |
+| K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 最终 APK hash 一致；Android 16/API 36，冷启动约 977 ms，无 app 崩溃/ANR |
 
-```
-AudioRecord(16k PCM, VOICE_RECOGNITION + AEC/NS + 软件增益)
-  → 自适应 VAD 分段（噪声基线 + 15dB）
-  → ASR 引擎链（TeleSpeechASR 主力[免费] → SenseVoiceSmall 兜底 → 讯飞 rtasr 增强可选）
-  → 句子文本流
-  → 事件引擎（拼音模糊点名匹配 + 触发词提问检测 + 灵敏度三档 + 抑制窗口）
-  → 提醒通道（震动/铃声/锁屏通知/全屏闪屏/耳机音，独立开关）
-  + AI 回答（OpenAI 兼容 SSE 流式 → 悬浮窗卡片 → 回填数据库）
-  + 历史（Room：课程/转写全文/事件）
-  + 课后总结（两级压缩四段式）
-```
+密钥扫描的边界也已记录：生产代码没有实际凭证命中；当前测试代码包含讯飞公开签名示例和合成测试 key，不能当作生产密钥。
+
+## 已验证的当前 v0.3.0 能力
+
+下列“已验证”指实现路径已存在，并由 JVM 测试或静态检查覆盖；云服务准确率、真实网络配额、后台长时间运行和手机厂商行为仍需设备测试。
+
+### 听讲、分段与 ASR
+
+- `AudioRecord` 以 16 kHz 单声道 PCM 采集；VAD 负责静音切段，并生成带稳定 ID、起止偏移和 WAV 字节的 `WavSegment`。
+- XingChenASR-V3.2-Ultra/SenseVoice 走按片段请求的 HTTP ASR 路径；片段失败时只重试/切换当前片段，不重放已经成功的片段。
+- 讯飞 RTASR 保留独立的流式适配器，错误、超时和取消会变成显式失败状态，不再只打印错误。
+- 点名支持名字表和拼音/同音变体；提问检测、滚动课堂上下文、五类提醒通道（震动、铃声、系统通知、全屏闪屏、耳机提示音）均有代码路径和 JVM 测试。
+
+### 会话生命周期、通知与界面状态
+
+- 同一时刻的重复 START 只创建一个课程/管线；STOP 会先停止管线、等待必要的持久化、完成课程收尾，再请求停止服务。
+- 前台通知包含“停止听讲”动作，并显示已听时长、当前引擎和待处理段数；通知正文不放课堂原文或 AI 答案。
+- Home/Live 从权威 `PipelineState` 读取 Listening、Recovering、Stopping 等状态，不另维护一个容易过期的 listening Boolean。
+- 浮窗在点名/提问模式切换和新会话时清理旧内容；没有悬浮窗权限时，应用会给出可见反馈，但答案卡不会显示。
+
+### Room 历史、总结与重点标记
+
+- Room schema v3 保存课程状态/总结状态、转写片段偏移/标记元数据、`pending_audio_segments` 和 `study_artifacts`；v1/v2 旧课程和旧转写可通过 migration 保留。
+- 课程历史支持按保留天数清理已结束课程，也支持确认后清空课程、事件、转写和待处理音频记录；正在进行的课程不会被自动保留清理删除。
+- 总结可手动生成/重试；打开 `autoSummary` 后，课程收尾时仅在有转写内容且 AI 配置完整的条件下提交带 `CONNECTED` 约束的任务，网络可用后执行。空转写不会调用 LLM，状态为 `NONE/QUEUED/RUNNING/SUCCEEDED/FAILED` 并持久化。
+- 内置默认四段式、考试复习、研讨课、实验课模板，也支持长度受限的自定义要求。总结正文在 UI 中按二级 Markdown 标题拆成卡片，失败只显示安全错误类别。
+- Live 可标记最近一条已落库句子；课程详情支持“全部/已标记”筛选，更新时同时校验 `chunkId` 和 `courseId`，避免串课标记。
+
+### 学习产物、WAV 导入、回放与 Tile
+
+- 课程详情正式提供闪卡、小测、双语复习三类学习产物；请求只把课程 ID、产物类型和模式交给 WorkManager，原文与密钥在运行时从本地读取。
+- 历史页使用 SAF `OpenDocument` 导入本地音频；当前明确支持 16 kHz、单声道、PCM16 WAV，并限制输入大小和内存中的单段数据。
+- 音频回放遵循设置中的保留策略，只从应用私有目录读取可回放的失败/保留片段，路径经过 canonical-root 校验。
+- Quick Settings Tile 直接读取权威 `PipelineState`；未配置时保持可点击并回到引导/自检，不把 `STATE_UNAVAILABLE` 当作配置提示的替代品。
+- 以上功能已有 JVM 合约测试；系统文件选择器、MediaPlayer、Tile 点击和 MIUI 后台行为仍需 Android 真机验收。
+
+## 离线恢复不是离线识别
+
+当前实现的边界要说清楚：
+
+1. **断网时不会在手机本地完成 ASR。** ASR 和 LLM 仍需要用户配置的云端/兼容服务。
+2. 某一个 WAV 片段最终转写失败时，只把这个失败片段写入应用私有的 `noBackupFilesDir/pending-audio`，不默认保存整节课录音。
+3. `PendingTranscriptionWorker` 使用 WorkManager 的 `CONNECTED` 网络约束、指数退避和有界尝试次数；网络恢复后再按 `createdTs` 顺序转写，成功写入 Room 后才删除待处理文件。
+4. 缺失/损坏文件、认证/配置错误会进入可见的终态失败，不会无限重试；WorkManager Data 不携带 API key、音频、文件路径或转写正文。
+
+### 音频存储估算
+
+按 16 kHz、单声道、16-bit PCM 估算，原始采样约为 32,000 bytes/s；下表未计少量 WAV 头。由于默认只保留失败片段，实际占用取决于失败片段的总时长，而不是整节课时长。
+
+| 连续音频时长 | 约占用 |
+|---:|---:|
+| 1 分钟 | 1.83 MiB |
+| 5 分钟 | 9.16 MiB |
+| 45 分钟 | 82.40 MiB |
+| 90 分钟 | 164.79 MiB |
+
+当前版本没有“整节课录音”默认策略；也没有把离线恢复宣传成真正的离线语音识别。上述恢复流程已有 JVM 合约测试，但尚未在真机上做断网→重连的完整观察。
+
+## AI 服务与 Command Code
+
+AI 使用 OpenAI 兼容接口。内置预设包括 DeepSeek 官方、硅基流动和 Command Code：
+
+| 预设 | Base URL | 模型 |
+|---|---|---|
+| Command Code | `https://api.commandcode.ai/provider/v1` | `deepseek/deepseek-v4-flash` |
+
+Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`），并有 MockWebServer 测试验证。API key 必须由用户显式填写；预设不会从 ASR 设置复制 key，也不会把 key 写入 WorkManager Data。
+
+## 设置项的真实行为
+
+设置页当前可见设置与生产消费者矩阵严格对应（26/26），不是“能保存但运行时无效果”的占位项：
+
+| 分组 | 已接入行为 |
+|---|---|
+| 点名/提问 | 名字与变体、匹配灵敏度、点名/提问抑制窗口、提问词等级 |
+| 语音 | VAD 阈值、分段最长时长、ASR 引擎选择、硅基流动 ASR key |
+| 提醒 | 五个通道开关、锁屏通知开关、震动模式；铃声音量由系统控制，本版本不修改全局音量 |
+| AI | Base URL、AI key、模型、回答长度、答案风格、流式输出 |
+| 总结 | 自动总结开关、内置/自定义模板及长度受限的自定义要求 |
+| 数据 | 7/30/90 天或永久保留、确认后清空历史 |
+| 通用 | 跟随系统/深色/浅色模式、自检调试页入口 |
+
+### API key 存储与迁移
+
+- 生产实现通过 Android Keystore 生成不可导出的 AES key，用 AES-GCM 把 AI/ASR key 写入应用私有目录的密文文件；JVM 测试使用显式 fake seam，不冒充硬件 Keystore 验收。
+- 旧版 DataStore 明文迁移顺序固定为：读取旧值 → 写入 SecretStore → 精确读回 → 删除旧值 → 最后写入迁移标记。任一步失败都会保留旧值并允许下次重试。
+- 普通设置仍在 DataStore；API key 不以明文设置项保存。日志只允许有限的模块、耗时、HTTP 状态、字符数、片段 ID、重试次数等诊断字段，禁止课堂原文、答案、provider body 和 key。
+
+## 隐私边界与明确不做的事
+
+- 课程、事件、转写、设置和待处理片段默认留在本机；应用关闭系统云备份（`allowBackup=false`）。
+- 只有在相应功能执行时，音频片段/转写或问题文本才会发送到用户配置的 ASR/LLM 服务；项目不提供云同步、团队共享、订阅或计费。
+- 不申请 `MANAGE_EXTERNAL_STORAGE`，不使用 AccessibilityService、MediaProjection、开机自动录音，也不做微信/QQ 通话录音。
+- 当前 v0.3.0 正式纳入闪卡、小测、双语复习、音频回放、WAV 导入和 Quick Settings Tile；这些路径已通过 JVM 合约测试，但尚未完成真机行为验收。
+
+## Android、MIUI 与当前限制
+
+- 要求 Android 8.0（API 26）或更高；compileSdk/targetSdk 为 35，`versionName` 为 `0.3.0`、`versionCode` 为 `3`，源码构建使用 JDK 17，Gradle wrapper 为 8.7。
+- Android 13+ 的通知权限、麦克风权限、悬浮窗权限需要用户在系统设置授权。没有悬浮窗权限时，监听和转写路径可以继续，但浮窗回答不会出现。
+- MIUI/其他国产 ROM 可能需要把本应用电池策略设为“无限制”、允许自启动，并手动开启悬浮窗；否则后台服务可能被系统暂停。
+- K80 已完成最终 APK 安装回读、冷启动、权限/AppOps 和 UI hierarchy smoke；这不等于 MIUI 业务验收。锁屏、全屏提醒、后台保活、真实 ASR 准确率、WAV 选择器、回放、Tile 点击和断网重连仍是后续设备门。
 
 ## 快速开始
 
-### 方式一：直接安装 APK（推荐）
+### 方式一：下载 APK
 
-从 [Releases](../../releases) 下载 `app-debug.apk`，安装到 Android 8.0+ 手机。
-
-> 若 Releases 暂无产物，请按方式二自行构建。
+从 [Releases](../../releases) 下载 `app-debug.apk`。如果 Releases 没有产物，请使用源码构建；当前质量门生成的 APK 仅是 debug 构建，不是设备验收证明。
 
 ### 方式二：源码构建
 
-环境要求：JDK 17、Android SDK（compileSdk 35）、Gradle 8.7（wrapper 已含）。
+环境要求：JDK 17、Android SDK Platform 35。Gradle 8.7 已由 wrapper 管理。
 
 ```bash
-# 1. 配置 SDK 路径（首次）
-echo "sdk.dir=你的AndroidSDK路径" > local.properties
+# Git Bash：把路径替换为本机 Android SDK 路径
+printf 'sdk.dir=C:/path/to/Android/Sdk\n' > local.properties
 
-# 2. 跑测试 + 构建 APK
+# 日常构建
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 
-# 3. 产物在 app/build/outputs/apk/debug/app-debug.apk
+# 需要排除缓存影响时使用质量门命令
+./gradlew :app:testDebugUnitTest --rerun-tasks
+./gradlew :app:assembleDebug --rerun-tasks
+
+# APK 产物
+# app/build/outputs/apk/debug/app-debug.apk
 ```
 
-（中国大陆网络下载依赖慢时，给 gradle 加代理参数：`-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890`）
+Windows 命令提示符或 PowerShell 可将 `./gradlew` 替换为 `gradlew.bat`。当前使用 AGP 8.6.1，已针对 compileSdk 35；本次 `testDebugUnitTest` 和 `assembleDebug` 均成功。
 
-### 首次使用三步配置
+### 首次使用
 
-1. **录名字**：设置 → 名字表 → 添加你的姓名（建议加拼音变体，防同音误识别）
-2. **授权限**：麦克风 + 通知；MIUI 等国产 ROM 悬浮窗需在系统设置手动开（App 内有引导）
-3. **配 AI**：设置 → AI → 点「DeepSeek 官方预设」，填你的 API Key（[platform.deepseek.com](https://platform.deepseek.com) 注册）
+1. 在引导中录入名字及可选拼音变体。
+2. 授予麦克风、通知权限；需要浮窗回答时另外授予悬浮窗权限。
+3. 在 AI 设置中选择预设并填写 AI key；ASR key 在“语音”分组单独填写。
+4. 先用自检页确认权限和配置，再开始听讲。
 
-## ASR 引擎与成本
+## 项目结构
 
-| 引擎 | 成本 | 特点 |
-|---|---|---|
-| TeleSpeechASR（电信，经硅基流动） | 永久免费 | 60 方言混说，会议场景字准 94%，**默认主力** |
-| SenseVoiceSmall（硅基流动） | 免费 | 兜底 |
-| 讯飞实时语音转写 | 免费额度（新用户礼包）；付费 ¥9.9/h | 流式低延迟，重要课可选增强 |
+```text
+app/src/main/java/com/classsentinel/
+├── core/audio       # AudioRecord、VAD、WAV 分段、失败片段私有存储
+├── core/speech      # ASR 引擎、错误模型、分段路由与 fallback
+├── core/context     # 最近课堂上下文
+├── core/detect      # 点名/提问检测
+├── core/alert       # 震动、铃声、通知、闪屏、耳机提醒
+├── core/llm         # OpenAI 兼容 LLM 与 provider 预设
+├── core/importer    # SAF WAV 导入与流式解析
+├── core/summary     # 总结生成与模板
+├── data             # Room、DataStore、迁移、历史与设置仓库
+├── security         # SecretStore 与 Android Keystore 实现
+├── service          # 前台服务、会话生命周期、浮窗、实时状态总线
+├── tile             # Quick Settings Tile
+├── ui                # Compose 页面和状态映射
+└── worker            # 待处理音频、总结、历史清理 Worker
+```
 
-- 硅基流动 ASR Key 获取：[cloud.siliconflow.cn](https://cloud.siliconflow.cn) 注册 → API 密钥（免费额度即可用）
-- AI 问答任意 OpenAI 兼容服务均可（DeepSeek 官方/硅基流动/OpenRouter…）
-
-## 设置项说明
-
-| 分组 | 关键项 | 说明 |
-|---|---|---|
-| 点名 | 名字表 | 支持同音变体（如：张微, 张威, zhang wei） |
-| 点名 | 匹配灵敏度 | 严格/标准/宽松（影响模糊匹配阈值与上下文确认） |
-| 点名 | 抑制窗口 | 同一名字重复提醒的最小间隔 |
-| 语音 | VAD 静音阈值 | 越低越敏感（课堂安静时 -35 即可） |
-| 语音 | 分段最长时长 | 一句话的最长切分（建议 8s） |
-| 语音 | ASR 引擎 | 三引擎可切 |
-| 提醒 | 五通道 | 震动模式/铃声音量/闪屏等独立开关 |
-| AI | 三件套 + 预设 | baseUrl/apiKey/model + 一键预设 |
-| 数据 | 历史保留 | 7/30/90 天/永久 |
-
-## 常见问题
-
-**Q: 手机外放的声音也被转写了？**  
-A: 已内置回声消除（AEC）+ 降噪（NS），手机自己的外放会被消除。外部声源（老师）不受影响。
-
-**Q: 转写效果差？**  
-A: 检查「分段最长时长」是否太短（<5s 会把话切碎）；离讲台近效果更好；同音人名依赖名字表拼音变体。
-
-**Q: 切后台就不监听了？**  
-A: 国产 ROM（MIUI/EMUI 等）需在系统设置将本 App 的省电策略设为「无限制」，并允许自启动。
-
-**Q: AI 回答不显示？**  
-A: 确认悬浮窗权限已开（MIUI 必须系统设置手动开）、AI 三件套已填、网络可直连 AI 服务。
-
-## 隐私
-
-- 名字表、灵敏度、API Key 全部仅存本机 DataStore，不上传
-- 转写文本仅发往你配置的 ASR 引擎；问题文本仅发往你配置的 LLM
-- 应用禁止了系统云备份（`allowBackup=false`），数据库不会被备份到云端
-- 所有权限可随时在系统设置中撤销
-
-## 技术栈
-
-Kotlin 2 · Jetpack Compose (Material 3) · Room · DataStore · Coroutines/Flow · OkHttp SSE · TinyPinyin · 无任何网络框架以外第三方业务依赖
-
-架构分层：`core/audio`（采集/VAD）· `core/speech`（ASR 引擎接口+实现）· `core/detect`（事件检测）· `core/alert`（提醒通道）· `core/llm`（答题）· `data`（Room+DataStore）· `service`（前台服务/悬浮窗）· `ui`（Compose 七屏）
-
-测试：65+ JVM 单测（检测算法/引擎 MockWebServer/Room Robolectric/DataStore/签名向量），`./gradlew :app:testDebugUnitTest` 一键全跑。
-
-## 贡献
-
-欢迎 Issue/PR。提交前请跑全量测试。
-
-## License
+## 许可证
 
 [MIT](LICENSE) © ClassSentinel Contributors
 
@@ -125,6 +183,15 @@ Kotlin 2 · Jetpack Compose (Material 3) · Room · DataStore · Coroutines/Flow
 
 ## English
 
-ClassSentinel is a university classroom AI assistant for Android: it listens to lectures in the background, detects when the teacher calls your name or asks a question, alerts you via vibration/notification/floating window, and streams AI-generated spoken answers. All data stays local; cloud services are only used for speech recognition and answer generation. See [Features](#特性) above for the full list.
+ClassSentinel is an Android classroom assistant. It captures lecture audio in the foreground, segments it for configurable ASR providers, detects name calls and questions, presents alerts, and stores course history locally. Optional summaries use a user-configured OpenAI-compatible LLM.
 
-Built with Kotlin, Jetpack Compose (Material 3), Room, and DataStore. Licensed under MIT.
+The v0.3.0 reliability and study-workflow slice has a verified JVM gate (347 tests across 62 suites), a clean Android Lint report, and a successful debug APK build. A K80 install/cold-start/permission smoke has run, but this is not a device certification: MIUI background limits, real provider accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+
+Important privacy boundaries:
+
+- Only failed/untranscribed segments are retained for recovery by default; this is not offline ASR.
+- API keys use an Android Keystore-backed private store in production and are migrated from legacy DataStore values only after read-back verification.
+- Classroom audio/transcript/question data is sent only to the provider configured for the requested feature. There is no cloud sync, broad storage permission, boot auto-recording, AccessibilityService, MediaProjection, or call recording.
+- Flashcards, quizzes, bilingual review, replay/import, and Quick Settings tile are part of the v0.3.0 source scope and have JVM contract coverage; their Android device behavior remains unverified.
+
+Built with Kotlin 2, Jetpack Compose Material 3, Room, DataStore, WorkManager, Coroutines, OkHttp, and JUnit/Robolectric. Licensed under MIT.

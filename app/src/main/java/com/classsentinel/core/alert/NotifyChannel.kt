@@ -15,7 +15,8 @@ import com.classsentinel.core.detect.EventType
  * 通知通道：高优先级通知，点名/提问立即弹出。
  * 内容只提示事件类型，不含答案。
  */
-class NotifyChannel : AlertChannel {
+class NotifyChannel(
+) : AlertChannel {
 
     override val key = "notify"
 
@@ -45,8 +46,8 @@ class NotifyChannel : AlertChannel {
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(text)
-            .setPriority(Notification.PRIORITY_HIGH)
             .setCategory(Notification.CATEGORY_ALARM)
+            .setVisibility(Notification.VISIBILITY_SECRET)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
             .build()
@@ -59,3 +60,7 @@ class NotifyChannel : AlertChannel {
         private const val NOTIFICATION_ID = 2001
     }
 }
+
+/** 锁屏开关的纯映射：关闭时由系统隐藏通知内容，避免课堂提醒泄露。 */
+@Suppress("UNUSED_PARAMETER")
+internal fun notificationVisibility(lockscreenNotify: Boolean): Int = Notification.VISIBILITY_SECRET

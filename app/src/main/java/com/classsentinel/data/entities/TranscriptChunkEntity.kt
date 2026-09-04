@@ -20,4 +20,12 @@ data class TranscriptChunkEntity(
     val text: String,
     /** 转写时间 */
     val ts: Long,
+    /** VAD 分句片段 ID */
+    val segmentId: String = "",
+    /** 片段起始偏移（毫秒） */
+    val startOffsetMs: Long = 0L,
+    /** 片段结束偏移（毫秒） */
+    val endOffsetMs: Long = 0L,
+    /** 是否被标记 */
+    val isMarked: Boolean = false,
 )

@@ -74,12 +74,30 @@ class LlmClientTest {
 
     @Test
     fun `throws IOException with status code on non 2xx`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
+        server.enqueue(MockResponse().setResponseCode(500).setBody("provider body must not escape"))
         val err = runCatching {
             LlmClient().streamChat(listOf(mapOf("role" to "user", "content" to "hi")), cfg()).toList()
         }.exceptionOrNull()
         assertTrue(err is IOException)
         assertTrue(err!!.message!!.contains("500"))
+        assertTrue(!err.message!!.contains("provider body"))
+    }
+
+    @Test
+    fun `Command Code preset disables thinking in the request payload`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("data: [DONE]\n\n"))
+        val commandCode = AiProviderPreset.COMMAND_CODE
+            .toLlmConfig(apiKey = "command-code-test-key")
+            .copy(baseUrl = server.url("/v1").toString())
+
+        LlmClient().streamChat(
+            listOf(mapOf("role" to "user", "content" to "hi")),
+            commandCode,
+        ).toList()
+
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("deepseek/deepseek-v4-flash", body.getString("model"))
+        assertEquals("disabled", body.getJSONObject("thinking").getString("type"))
     }
 
     @Test
@@ -104,7 +122,7 @@ class LlmClientTest {
         assertEquals(2, msgs.length())
         val system = msgs.getJSONObject(0)
         assertEquals("system", system.getString("role"))
-        assertTrue(system.getString("content").contains("课堂答题助手"))
+        assertTrue(system.getString("content").contains("课堂即时答题助手"))
 
         val user = msgs.getJSONObject(1)
         assertEquals("user", user.getString("role"))

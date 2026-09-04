@@ -1,0 +1,12 @@
+[
+  {"text":"张伟，你来回答一下","expected":"张伟"},
+  {"text":"张微同学，起来回答","expected":"张伟"},
+  {"text":"章伟，你来一下","expected":"张伟"},
+  {"text":"李华，你来回答","expected":null},
+  {"text":"老师请大家看这里","expected":null},
+  {"text":"同学们先打开课本","expected":null},
+  {"text":"张伟今天没来","expected":null},
+  {"text":"张伟同学上次作业不错","expected":null},
+  {"text":"王国来回答这个问题","expected":null},
+  {"text":"明天来回答这个问题","expected":null}
+]

@@ -13,8 +13,17 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.classsentinel.core.config.AppConfig
+import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
+import com.classsentinel.core.llm.AiProviderPreset
+import com.classsentinel.core.log.SafeLog
+import com.classsentinel.core.summary.SummaryTemplate
+import com.classsentinel.core.summary.SummaryTemplateSettings
+import com.classsentinel.core.summary.SummaryTemplates
+import com.classsentinel.security.KeystoreSecretStore
+import com.classsentinel.security.SecretKeys
+import com.classsentinel.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -54,6 +63,7 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  */
 class SettingsRepository(
     private val dataStore: DataStore<Preferences>,
+    private val secretStore: SecretStore,
     private val syncEnabled: Boolean = true,
 ) {
 
@@ -75,12 +85,13 @@ class SettingsRepository(
     // ------------------------------------------------------------------
 
     suspend fun load() {
+        val initialPreferences = dataStore.data.first()
+        val secrets = migrateLegacySecrets(initialPreferences)
         val p = dataStore.data.first()
         val fallback = AppConfigSink( // 以 AppConfig 当前值兜底（冷启动时即默认值）
             names = AppConfig.names.value,
             sensitivity = AppConfig.sensitivity.value,
             channels = AppConfig.enabledChannels.value,
-            aiApiKey = "", // P1 修复：AI key 缺省为空，绝不用 ASR key 兜底（否则 AI 调用必 401）
         )
 
         val names = p[Keys.NAMES]?.let { decodeNameList(it) } ?: fallback.names
@@ -89,14 +100,15 @@ class SettingsRepository(
         val rollcallMs = p[Keys.ROLLCALL_SUPPRESS_MS] ?: fallback.sensitivity.rollcallSuppressMs
         val questionMs = p[Keys.QUESTION_SUPPRESS_MS] ?: fallback.sensitivity.questionSuppressMs
         val qLevel = p[Keys.QUESTION_WORD_LEVEL] ?: fallback.sensitivity.questionWordLevel
-        val aiApiKey = p[Keys.AI_API_KEY] ?: fallback.aiApiKey
-        val asrApiKey = p[Keys.ASR_SILICON_KEY] ?: AppConfig.siliconApiKey
+        val asrApiKey = secrets.asrSiliconKey
 
         AppConfig.names.value = names
         AppConfig.sensitivity.value = composeSensitivity(presetName, vadDb, rollcallMs, questionMs, qLevel)
         AppConfig.enabledChannels.value = Channels.ALL.filter { key ->
             p[Channels.prefKey(key)] ?: (key in fallback.channels)
         }.toSet()
+        AppConfig.lockscreenNotify.value = p[Keys.LOCKSCREEN_NOTIFY] ?: true
+        AppConfig.vibrationMode.value = normalizeVibrationMode(p[Keys.VIBRATE_MODE] ?: "normal")
         AppConfig.siliconApiKey = asrApiKey
 
         // 缺失键落盘默认值，保证 DataStore 自洽
@@ -107,12 +119,36 @@ class SettingsRepository(
             if (it[Keys.ROLLCALL_SUPPRESS_MS] == null) it[Keys.ROLLCALL_SUPPRESS_MS] = rollcallMs
             if (it[Keys.QUESTION_SUPPRESS_MS] == null) it[Keys.QUESTION_SUPPRESS_MS] = questionMs
             if (it[Keys.QUESTION_WORD_LEVEL] == null) it[Keys.QUESTION_WORD_LEVEL] = qLevel
-            if (it[Keys.AI_API_KEY] == null) it[Keys.AI_API_KEY] = aiApiKey
-            if (it[Keys.ASR_SILICON_KEY] == null) it[Keys.ASR_SILICON_KEY] = asrApiKey
             setDefaultsIfMissing(it)
         }
         // load 完成后才开启双向同步（此时 AppConfig 已是 DataStore 的真实值）
         startSyncIfNeeded()
+    }
+
+    /**
+     * Move legacy plaintext values only after SecretStore confirms an exact read-back.
+     * Any exception leaves both legacy values and the migration marker untouched.
+     */
+    private suspend fun migrateLegacySecrets(preferences: Preferences): StoredSecrets {
+        if (preferences[Keys.SECRETS_MIGRATED] != true) {
+            migrateLegacySecret(preferences[Keys.LEGACY_AI_API_KEY], SecretKeys.AI_API_KEY)
+            migrateLegacySecret(preferences[Keys.LEGACY_ASR_SILICON_KEY], SecretKeys.ASR_SILICON_KEY)
+            dataStore.edit {
+                it.remove(Keys.LEGACY_AI_API_KEY)
+                it.remove(Keys.LEGACY_ASR_SILICON_KEY)
+                it[Keys.SECRETS_MIGRATED] = true
+            }
+        }
+        return StoredSecrets(
+            aiApiKey = secretStore.get(SecretKeys.AI_API_KEY).orEmpty(),
+            asrSiliconKey = secretStore.get(SecretKeys.ASR_SILICON_KEY).orEmpty(),
+        )
+    }
+
+    private suspend fun migrateLegacySecret(value: String?, secretKey: String) {
+        if (value == null) return
+        secretStore.put(secretKey, value)
+        check(secretStore.get(secretKey) == value) { "Secret migration readback failed" }
     }
 
     @Synchronized
@@ -129,29 +165,32 @@ class SettingsRepository(
     private fun startSync() {
         syncScope.launch {
             AppConfig.names
-                .catch { }
                 .collect { list ->
                     runCatching { dataStore.edit { it[Keys.NAMES] = encodeNameList(list) } }
-                        .onFailure { e -> println("[Settings] sync names failed: ${e.message}") }
+                        .onFailure {
+                            SafeLog.w("settings_sync_failed", mapOf("module" to "SettingsRepository", "errorCode" to "NAMES_SYNC_FAILED"))
+                        }
                 }
         }
         syncScope.launch {
             AppConfig.sensitivity
-                .catch { }
                 .collect { sens ->
                     runCatching { dataStore.edit { it[Keys.SENSITIVITY_JSON] = encodeSensitivity(sens) } }
-                        .onFailure { e -> println("[Settings] sync sensitivity failed: ${e.message}") }
+                        .onFailure {
+                            SafeLog.w("settings_sync_failed", mapOf("module" to "SettingsRepository", "errorCode" to "SENSITIVITY_SYNC_FAILED"))
+                        }
                 }
         }
         syncScope.launch {
             AppConfig.enabledChannels
-                .catch { }
                 .collect { set ->
                     runCatching {
                         dataStore.edit { p ->
                             Channels.ALL.forEach { key -> p[Channels.prefKey(key)] = key in set }
                         }
-                    }.onFailure { e -> println("[Settings] sync channels failed: ${e.message}") }
+                    }.onFailure {
+                        SafeLog.w("settings_sync_failed", mapOf("module" to "SettingsRepository", "errorCode" to "CHANNEL_SYNC_FAILED"))
+                    }
                 }
         }
     }
@@ -218,19 +257,15 @@ class SettingsRepository(
         .map { it[Keys.VIBRATE_MODE] ?: "normal" }
         .ioCatch { "normal" }
 
-    val ringtoneVolumeFlow: Flow<Int> = dataStore.data
-        .map { it[Keys.RINGTONE_VOLUME] ?: 80 }
-        .ioCatch { 80 }
-
     val aiSettingsFlow: Flow<AiSettings> = dataStore.data
         .map { p ->
             AiSettings(
-                baseUrl = p[Keys.AI_BASE_URL] ?: Constants.AI_BASE_URL_DEFAULT,
-                apiKey = p[Keys.AI_API_KEY] ?: "",
-                model = p[Keys.AI_MODEL] ?: Constants.AI_MODEL_DEFAULT,
+                baseUrl = p[Keys.AI_BASE_URL] ?: DEFAULT_AI_SETTINGS.baseUrl,
+                apiKey = secretStore.get(SecretKeys.AI_API_KEY).orEmpty(),
+                model = p[Keys.AI_MODEL] ?: DEFAULT_AI_SETTINGS.model,
             )
         }
-        .ioCatch { AiSettings(Constants.AI_BASE_URL_DEFAULT, "", Constants.AI_MODEL_DEFAULT) }
+        .ioCatch { DEFAULT_AI_SETTINGS }
 
     val answerLengthFlow: Flow<String> = dataStore.data
         .map { it[Keys.ANSWER_LENGTH] ?: "mid" }
@@ -248,13 +283,51 @@ class SettingsRepository(
         .map { it[Keys.AUTO_SUMMARY] ?: false }
         .ioCatch { false }
 
+    val summaryTemplateIdFlow: Flow<String> = dataStore.data
+        .map { it[Keys.SUMMARY_TEMPLATE_ID] ?: SummaryTemplates.DEFAULT_ID }
+        .ioCatch { SummaryTemplates.DEFAULT_ID }
+
+    val summaryCustomPromptFlow: Flow<String> = dataStore.data
+        .map { it[Keys.SUMMARY_CUSTOM_PROMPT] ?: "" }
+        .ioCatch { "" }
+
+    /** 当前可执行模板；损坏的自定义值由目录安全回退到默认模板。 */
+    val summaryTemplateFlow: Flow<SummaryTemplate> = dataStore.data
+        .map { p ->
+            SummaryTemplates.resolve(
+                id = p[Keys.SUMMARY_TEMPLATE_ID] ?: SummaryTemplates.DEFAULT_ID,
+                customPrompt = p[Keys.SUMMARY_CUSTOM_PROMPT] ?: "",
+            )
+        }
+        .ioCatch { SummaryTemplates.DEFAULT }
+
+    /** 设置页一次性读取的模板快照，避免编辑草稿被初始默认值覆盖。 */
+    val summaryTemplateSettingsFlow: Flow<SummaryTemplateSettings> = dataStore.data
+        .map { p ->
+            SummaryTemplateSettings(
+                templateId = p[Keys.SUMMARY_TEMPLATE_ID] ?: SummaryTemplates.DEFAULT_ID,
+                customPrompt = p[Keys.SUMMARY_CUSTOM_PROMPT] ?: "",
+            )
+        }
+        .ioCatch { SummaryTemplateSettings(SummaryTemplates.DEFAULT_ID, "") }
+
     val retentionDaysFlow: Flow<String> = dataStore.data
         .map { it[Keys.RETENTION_DAYS] ?: "30" }
         .ioCatch { "30" }
 
+    /** 本地音频保留策略；未知值安全回退到 FAILED_ONLY。 */
+    val audioRetentionPolicyFlow: Flow<String> = dataStore.data
+        .map { AudioRetentionPolicy.fromStored(it[Keys.AUDIO_RETENTION_POLICY]).storedValue }
+        .ioCatch { AudioRetentionPolicy.DEFAULT.storedValue }
+
     val darkModeFlow: Flow<String> = dataStore.data
         .map { it[Keys.DARK_MODE] ?: "system" }
         .ioCatch { "system" }
+
+    /** 首启引导完成标记；缺失即视为未完成，避免新安装直接跳过必要设置。 */
+    val onboardingCompletedFlow: Flow<Boolean> = dataStore.data
+        .map { it[Keys.ONBOARDING_COMPLETED] ?: false }
+        .ioCatch { false }
 
     // ------------------------------------------------------------------
     // 保存接口（写 DataStore + 同步回写 AppConfig）
@@ -304,8 +377,7 @@ class SettingsRepository(
 
     suspend fun saveAsrEngine(engine: String) {
         dataStore.edit { it[Keys.ASR_ENGINE] = engine }
-        // AppConfig 无对应字段；引擎选择由读取方消费（ListenService 后续接入）
-        println("[Settings] ASR engine -> $engine")
+        SafeLog.d("settings_saved", mapOf("module" to "SettingsRepository", "engine" to engine))
     }
 
     suspend fun setChannelEnabled(key: String, enabled: Boolean) {
@@ -319,39 +391,44 @@ class SettingsRepository(
 
     suspend fun saveLockscreenNotify(enabled: Boolean) {
         dataStore.edit { it[Keys.LOCKSCREEN_NOTIFY] = enabled }
+        AppConfig.lockscreenNotify.value = enabled
     }
 
     suspend fun saveVibrationMode(mode: String) {
-        dataStore.edit { it[Keys.VIBRATE_MODE] = mode }
-    }
-
-    suspend fun saveRingtoneVolume(volume: Int) {
-        dataStore.edit { it[Keys.RINGTONE_VOLUME] = volume.coerceIn(0, 100) }
+        val normalized = normalizeVibrationMode(mode)
+        dataStore.edit { it[Keys.VIBRATE_MODE] = normalized }
+        AppConfig.vibrationMode.value = normalized
     }
 
     suspend fun saveAiSettings(ai: AiSettings) {
+        val normalized = AiProviderPreset.normalizeSettings(ai)
+        writeSecret(SecretKeys.AI_API_KEY, normalized.apiKey)
         dataStore.edit {
-            it[Keys.AI_BASE_URL] = ai.baseUrl
-            it[Keys.AI_API_KEY] = ai.apiKey
-            it[Keys.AI_MODEL] = ai.model
+            it[Keys.AI_BASE_URL] = normalized.baseUrl
+            it.remove(Keys.LEGACY_AI_API_KEY)
+            it[Keys.AI_MODEL] = normalized.model
         }
     }
 
     suspend fun saveAiBaseUrl(url: String) {
-        dataStore.edit { it[Keys.AI_BASE_URL] = url }
+        dataStore.edit { it[Keys.AI_BASE_URL] = AiProviderPreset.normalizeBaseUrl(url) }
     }
 
     suspend fun saveAiApiKey(key: String) {
-        dataStore.edit { it[Keys.AI_API_KEY] = key }
+        writeSecret(SecretKeys.AI_API_KEY, key.trim())
+        dataStore.edit { it.remove(Keys.LEGACY_AI_API_KEY) }
     }
 
     suspend fun saveAsrSiliconKey(key: String) {
-        AppConfig.siliconApiKey = key
-        dataStore.edit { it[Keys.ASR_SILICON_KEY] = key }
+        val normalized = key.trim()
+        writeSecret(SecretKeys.ASR_SILICON_KEY, normalized)
+        dataStore.edit { it.remove(Keys.LEGACY_ASR_SILICON_KEY) }
+        AppConfig.siliconApiKey = normalized
     }
 
     suspend fun saveAiModel(model: String) {
-        dataStore.edit { it[Keys.AI_MODEL] = model }
+        require(model.trim().isNotBlank()) { "AI model must not be blank" }
+        dataStore.edit { it[Keys.AI_MODEL] = model.trim() }
     }
 
     suspend fun saveAnswerLength(length: String) {
@@ -370,12 +447,37 @@ class SettingsRepository(
         dataStore.edit { it[Keys.AUTO_SUMMARY] = enabled }
     }
 
+    /** 保存模板选择和可选自定义要求；只落盘 ID 与原始编辑文本，不落盘渲染结果。 */
+    suspend fun saveSummaryTemplate(templateId: String, customPrompt: String = "") {
+        val normalizedId = SummaryTemplates.requireKnownId(templateId)
+        val normalizedPrompt = customPrompt.trim()
+        val validation = SummaryTemplates.validateCustomPrompt(
+            normalizedPrompt,
+            required = normalizedId == SummaryTemplates.CUSTOM_ID,
+        )
+        require(validation == null) { validation ?: "INVALID_CUSTOM_PROMPT" }
+        dataStore.edit {
+            it[Keys.SUMMARY_TEMPLATE_ID] = normalizedId
+            it[Keys.SUMMARY_CUSTOM_PROMPT] = normalizedPrompt
+        }
+    }
+
     suspend fun saveRetentionDays(days: String) {
         dataStore.edit { it[Keys.RETENTION_DAYS] = days }
     }
 
+    /** 只保存稳定协议值，不把本地化 label 写入 DataStore。 */
+    suspend fun saveAudioRetentionPolicy(policy: String) {
+        val normalized = AudioRetentionPolicy.fromStored(policy).storedValue
+        dataStore.edit { it[Keys.AUDIO_RETENTION_POLICY] = normalized }
+    }
+
     suspend fun saveDarkMode(mode: String) {
         dataStore.edit { it[Keys.DARK_MODE] = mode }
+    }
+
+    suspend fun saveOnboardingCompleted(completed: Boolean = true) {
+        dataStore.edit { it[Keys.ONBOARDING_COMPLETED] = completed }
     }
 
     // ------------------------------------------------------------------
@@ -393,6 +495,11 @@ class SettingsRepository(
         )
     }
 
+    private suspend fun writeSecret(key: String, value: String) {
+        secretStore.put(key, value)
+        check(secretStore.get(key) == value) { "Secret write readback failed" }
+    }
+
     private fun composeSensitivity(
         presetName: String,
         vadDb: Int,
@@ -406,6 +513,9 @@ class SettingsRepository(
         questionWordLevel = qLevel,
     )
 
+    private fun normalizeVibrationMode(mode: String): String =
+        mode.trim().lowercase().takeIf { it in setOf("gentle", "normal", "strong") } ?: "normal"
+
     private fun <T> Flow<T>.ioCatch(fallback: () -> T): Flow<T> =
         catch { e -> if (e is IOException) emit(fallback()) else throw e }
 
@@ -414,30 +524,55 @@ class SettingsRepository(
         if (p[Keys.ASR_ENGINE] == null) p[Keys.ASR_ENGINE] = Constants.ASR_ENGINE_DEFAULT
         if (p[Keys.LOCKSCREEN_NOTIFY] == null) p[Keys.LOCKSCREEN_NOTIFY] = true
         if (p[Keys.VIBRATE_MODE] == null) p[Keys.VIBRATE_MODE] = "normal"
-        if (p[Keys.RINGTONE_VOLUME] == null) p[Keys.RINGTONE_VOLUME] = 80
         if (p[Keys.AI_BASE_URL] == null) p[Keys.AI_BASE_URL] = Constants.AI_BASE_URL_DEFAULT
         if (p[Keys.AI_MODEL] == null) p[Keys.AI_MODEL] = Constants.AI_MODEL_DEFAULT
         if (p[Keys.ANSWER_LENGTH] == null) p[Keys.ANSWER_LENGTH] = "mid"
         if (p[Keys.ANSWER_STYLE] == null) p[Keys.ANSWER_STYLE] = "terseness"
         if (p[Keys.STREAM_OUTPUT] == null) p[Keys.STREAM_OUTPUT] = true
         if (p[Keys.AUTO_SUMMARY] == null) p[Keys.AUTO_SUMMARY] = false
+        if (p[Keys.SUMMARY_TEMPLATE_ID] == null) p[Keys.SUMMARY_TEMPLATE_ID] = SummaryTemplates.DEFAULT_ID
+        if (p[Keys.SUMMARY_CUSTOM_PROMPT] == null) p[Keys.SUMMARY_CUSTOM_PROMPT] = ""
         if (p[Keys.RETENTION_DAYS] == null) p[Keys.RETENTION_DAYS] = "30"
+        if (p[Keys.AUDIO_RETENTION_POLICY] == null) {
+            p[Keys.AUDIO_RETENTION_POLICY] = AudioRetentionPolicy.DEFAULT.storedValue
+        }
         if (p[Keys.DARK_MODE] == null) p[Keys.DARK_MODE] = "system"
+        if (p[Keys.ONBOARDING_COMPLETED] == null) p[Keys.ONBOARDING_COMPLETED] = false
         Channels.ALL.forEach { key ->
             if (p[Channels.prefKey(key)] == null) p[Channels.prefKey(key)] = key in Channels.DEFAULT
         }
     }
 
     companion object {
+        /** The only AI fallback used by the UI; its key is intentionally empty. */
+        val DEFAULT_AI_SETTINGS: AiSettings = AiSettings(
+            baseUrl = Constants.AI_BASE_URL_DEFAULT,
+            apiKey = "",
+            model = Constants.AI_MODEL_DEFAULT,
+        )
+
         /** 应用内共享单例（DataStore 同文件只允许一个实例） */
         fun create(context: Context): SettingsRepository =
-            SettingsRepository(context.applicationContext.settingsDataStore)
+            SettingsRepository(
+                dataStore = context.applicationContext.settingsDataStore,
+                secretStore = KeystoreSecretStore(context.applicationContext),
+            )
+
+        /** Test-only constructor seam; production callers must use [create]. */
+        internal fun createForTests(context: Context, secretStore: SecretStore): SettingsRepository =
+            SettingsRepository(
+                dataStore = context.applicationContext.settingsDataStore,
+                secretStore = secretStore,
+                syncEnabled = false,
+            )
     }
 }
 
 // ----------------------------------------------------------------------
 // 键/常量/编解码
 // ----------------------------------------------------------------------
+
+internal const val SECRET_STORE_MIGRATION_PREF = "secret_store_migration_v1"
 
 private object Keys {
     val NAMES = stringPreferencesKey("names_json")
@@ -456,17 +591,21 @@ private object Keys {
     val CH_EAR = booleanPreferencesKey("ch_ear")
     val LOCKSCREEN_NOTIFY = booleanPreferencesKey("lockscreen_notify")
     val VIBRATE_MODE = stringPreferencesKey("vibrate_mode")
-    val RINGTONE_VOLUME = intPreferencesKey("ringtone_volume")
     val AI_BASE_URL = stringPreferencesKey("ai_base_url")
-    val AI_API_KEY = stringPreferencesKey("ai_api_key")
-    val ASR_SILICON_KEY = stringPreferencesKey("asr_silicon_key")
+    val LEGACY_AI_API_KEY = stringPreferencesKey(SecretKeys.AI_API_KEY)
+    val LEGACY_ASR_SILICON_KEY = stringPreferencesKey(SecretKeys.ASR_SILICON_KEY)
     val AI_MODEL = stringPreferencesKey("ai_model")
     val ANSWER_LENGTH = stringPreferencesKey("answer_length")
     val ANSWER_STYLE = stringPreferencesKey("answer_style")
     val STREAM_OUTPUT = booleanPreferencesKey("stream_output")
     val AUTO_SUMMARY = booleanPreferencesKey("auto_summary")
+    val SUMMARY_TEMPLATE_ID = stringPreferencesKey("summary_template_id")
+    val SUMMARY_CUSTOM_PROMPT = stringPreferencesKey("summary_custom_prompt")
     val RETENTION_DAYS = stringPreferencesKey("retention_days")
+    val AUDIO_RETENTION_POLICY = stringPreferencesKey("audio_retention_policy")
     val DARK_MODE = stringPreferencesKey("dark_mode")
+    val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+    val SECRETS_MIGRATED = booleanPreferencesKey(SECRET_STORE_MIGRATION_PREF)
 }
 
 private object Constants {
@@ -564,12 +703,23 @@ object SettingsRepositoryHolder {
             instance ?: SettingsRepository.create(context).also { instance = it }
         }
     }
+
+    /** Test-only replacement; always clear it in the test teardown. */
+    internal fun installForTests(repository: SettingsRepository?) {
+        synchronized(this) {
+            instance = repository
+        }
+    }
 }
+
+private data class StoredSecrets(
+    val aiApiKey: String,
+    val asrSiliconKey: String,
+)
 
 /** load() 时 AppConfig 当前值的兜底快照 */
 private data class AppConfigSink(
     val names: List<NameEntry>,
     val sensitivity: Sensitivity,
     val channels: Set<String>,
-    val aiApiKey: String,
 )

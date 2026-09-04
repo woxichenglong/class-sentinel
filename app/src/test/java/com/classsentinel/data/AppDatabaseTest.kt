@@ -3,6 +3,7 @@ package com.classsentinel.data
 import androidx.room.Room
 import com.classsentinel.data.entities.CourseEntity
 import com.classsentinel.data.entities.EventEntity
+import com.classsentinel.data.entities.StudyArtifactEntity
 import com.classsentinel.data.entities.TranscriptChunkEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -16,12 +17,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 /**
  * Room 数据库集成测试（Robolectric 提供 Android 框架影子实现 + 原生 SQLite）。
  * 覆盖：课程 CRUD / 事件统计与每日计数 / 转写块排序 / 三表联合完整性。
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class AppDatabaseTest {
 
     private lateinit var db: AppDatabase
@@ -156,5 +159,35 @@ class AppDatabaseTest {
         assertEquals(2, summaries[0].eventCount)
         assertEquals(cid, summaries[0].course.id)
         assertEquals("课程@1000", summaries[0].course.title)
+    }
+
+    @Test
+    fun `study artifact upsert keeps one row per course and type`() = runBlocking {
+        val courseId = db.courseDao().insert(course(start = 1_000L, end = 2_000L))
+        val dao = db.studyArtifactDao()
+        val queued = StudyArtifactEntity(
+            courseId = courseId,
+            type = StudyArtifactEntity.TYPE_FLASHCARDS,
+            status = StudyArtifactEntity.STATUS_QUEUED,
+            createdTs = 3_000L,
+            updatedTs = 3_000L,
+        )
+
+        val firstId = dao.upsert(queued)
+        val secondId = dao.upsert(
+            queued.copy(
+                status = StudyArtifactEntity.STATUS_SUCCEEDED,
+                contentJson = "[]",
+                updatedTs = 4_000L,
+            ),
+        )
+
+        assertEquals(firstId, secondId)
+        assertEquals(1, dao.getForCourse(courseId).size)
+        val stored = dao.getForCourseAndType(courseId, StudyArtifactEntity.TYPE_FLASHCARDS)
+        assertNotNull(stored)
+        assertEquals(StudyArtifactEntity.STATUS_SUCCEEDED, stored!!.status)
+        assertEquals("[]", stored.contentJson)
+        assertEquals(3_000L, stored.createdTs)
     }
 }

@@ -45,6 +45,7 @@ class LlmClient(
         if (cfg.thinkingDisabled) {
             payload.put("thinking", JSONObject().put("type", "disabled"))
         }
+        cfg.maxTokens?.let { payload.put("max_tokens", it) }
         val bodyStr = payload.toString()
         val req = Request.Builder()
             .url("${cfg.baseUrl.trimEnd('/')}/chat/completions")
@@ -56,7 +57,8 @@ class LlmClient(
         // 注意: 不能在 withContext(IO) 里 emit(Flow 不变式违规)，用 flowOn 切调度
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                throw IOException("LLM HTTP ${resp.code}: ${resp.body?.string()?.take(200)}")
+                // provider body 可能包含课堂内容/凭证提示；只向上层暴露状态码。
+                throw IOException("LLM HTTP ${resp.code}")
             }
             val source = resp.body?.source() ?: throw IOException("LLM empty body")
             while (true) {
