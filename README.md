@@ -11,8 +11,8 @@
 
 | 检查 | 命令/依据 | 结果 |
 |---|---|---|
-| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 85 个测试类、434 个用例；失败 0、错误 0、跳过 0 |
-| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，170,883,379 bytes；SHA-256：`227e73ff7c5f80f6e73ef1a889eeefac41bbd7a72d4253db2dfd064bf3203667` |
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 85 个测试类、435 个用例；失败 0、错误 0、跳过 0 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，170,883,379 bytes；SHA-256：`69bcb830ec58000d2f464894068c6f4391e2cf203d406959f555e4e597da30a4` |
 | 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 15 个，消费者 key 15 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
@@ -183,7 +183,7 @@ app/src/main/java/com/classsentinel/
 
 ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a local sherpa-onnx streaming ASR engine, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate (434 tests across 85 test classes), a clean Android Lint report, and a successful debug APK build. A K80 install/cold-start/permission smoke has run, but this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate (435 tests across 85 test classes), a clean Android Lint report, and a successful debug APK build. A K80 install/cold-start/permission smoke has run, but this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

@@ -4,7 +4,7 @@ import java.io.InputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.flow
 
 /** Distinguishes setup, warm-up, and steady-state measurements in a replay run. */
 enum class ReplayPhase {
@@ -92,9 +92,24 @@ internal class PcmReplayRunner(
         val startedAtNanos = nowNanos()
         var inputSamples = 0L
         val observations = mutableListOf<ReplayObservation>()
+        val pacedPcm = flow {
+            var samplesBeforePacket = 0L
+            pcm.collect { chunk ->
+                if (config.mode == ReplayMode.REALTIME) {
+                    awaitPacketTarget(
+                        replayStartNanos = startedAtNanos,
+                        samplesBeforePacket = samplesBeforePacket,
+                        sampleRate = profile.recognizer.sampleRate,
+                    )
+                }
+                inputSamples += chunk.size.toLong()
+                emit(chunk)
+                samplesBeforePacket += chunk.size.toLong()
+            }
+        }
 
         engine.transcribe(
-            pcm.onEach { chunk -> inputSamples += chunk.size.toLong() },
+            pacedPcm,
         ).collect { event ->
             observations += ReplayObservation(
                 event = event,
@@ -138,11 +153,24 @@ internal class PcmReplayRunner(
             input = wav,
             expectedSampleRate = preparedModel.profile.recognizer.sampleRate,
             packetMs = config.inputPacketMs,
-            mode = config.mode,
-            delayBetweenPackets = delayBetweenPackets,
         ),
         config = config,
     )
+
+    private suspend fun awaitPacketTarget(
+        replayStartNanos: Long,
+        samplesBeforePacket: Long,
+        sampleRate: Int,
+    ) {
+        val targetNanos = replayStartNanos +
+            (samplesBeforePacket / sampleRate.toLong()) * 1_000_000_000L +
+            (samplesBeforePacket % sampleRate.toLong()) * 1_000_000_000L / sampleRate.toLong()
+        val waitNanos = targetNanos - nowNanos()
+        if (waitNanos > 0L) {
+            val waitMs = waitNanos / 1_000_000L + if (waitNanos % 1_000_000L == 0L) 0L else 1L
+            delayBetweenPackets(waitMs)
+        }
+    }
 
     private fun elapsedMs(startedAtNanos: Long): Long =
         ((nowNanos() - startedAtNanos) / 1_000_000L).coerceAtLeast(0L)

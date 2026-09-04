@@ -135,6 +135,7 @@ class PcmReplayRunnerTest {
 
     @Test
     fun `realtime wav replay waits between transport packets`() = runTest {
+        val clock = FakeClock()
         val waits = mutableListOf<Long>()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "fake"
@@ -142,13 +143,20 @@ class PcmReplayRunnerTest {
             override val sampleRate = 1_000
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
-                pcm.toList()
+                val processingMs = listOf(35L, 120L, 0L)
+                var index = 0
+                pcm.collect {
+                    clock.advanceMs(processingMs[index++])
+                }
                 emit(StreamingAsrEvent.Final(1, "实时回放", 0L, 250L))
             }
         }
         val runner = PcmReplayRunner(
-            nowNanos = { 0L },
-            delayBetweenPackets = { waits += it },
+            nowNanos = { clock.nowNanos },
+            delayBetweenPackets = {
+                waits += it
+                clock.advanceMs(it)
+            },
         )
 
         val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
@@ -164,9 +172,59 @@ class PcmReplayRunnerTest {
             config = ReplayInputConfig(inputPacketMs = 100, mode = ReplayMode.REALTIME),
         )
 
-        assertEquals(listOf(100L, 100L), waits)
+        assertEquals(listOf(65L), waits)
         assertEquals(ReplayMode.REALTIME, result.replayMode)
         assertEquals(100, result.inputPacketMs)
+    }
+
+    @Test
+    fun `direct realtime pcm uses absolute audio time from cumulative samples`() = runTest {
+        val clock = FakeClock()
+        val waits = mutableListOf<Long>()
+        val receivedChunks = mutableListOf<Int>()
+        val engine = object : ProfileBoundStreamingSpeechEngine {
+            override val name = "fake"
+            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
+            override val sampleRate = 1_000
+
+            override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
+                val processingMs = listOf(35L, 20L, 0L)
+                var index = 0
+                pcm.collect { chunk ->
+                    receivedChunks += chunk.size
+                    clock.advanceMs(processingMs[index++])
+                }
+                emit(StreamingAsrEvent.Final(1, "直接回放", 0L, 250L))
+            }
+        }
+        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
+            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 1_000),
+        )
+        val runner = PcmReplayRunner(
+            nowNanos = { clock.nowNanos },
+            delayBetweenPackets = {
+                waits += it
+                clock.advanceMs(it)
+            },
+        )
+
+        val result = runner.run(
+            preparedModel = PreparedModel.from(profile, engine),
+            gitCommitSha = "abc1234",
+            runId = "run-direct-realtime",
+            phase = ReplayPhase.WARM,
+            pcm = flowOf(
+                ShortArray(100),
+                ShortArray(50),
+                ShortArray(100),
+            ),
+            config = ReplayInputConfig(inputPacketMs = 100, mode = ReplayMode.REALTIME),
+        )
+
+        assertEquals(listOf(100, 50, 100), receivedChunks)
+        assertEquals(listOf(65L, 30L), waits)
+        assertEquals(250L, result.inputSamples)
+        assertEquals(250L, result.inputDurationMs)
     }
 
     @Test
