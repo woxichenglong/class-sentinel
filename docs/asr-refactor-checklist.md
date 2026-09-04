@@ -104,9 +104,12 @@ AudioStreamer
 - `[已完成]` `PcmReplayRunner`：`PreparedModel` 将 profile、artifactSetHash 与 profile-bound engine 绑定；直接接受 PCM 或 PCM16 mono WAV，使用独立 `ReplayInputConfig.inputPacketMs`（默认 100ms），支持 FAST/REALTIME；REALTIME pacing 在 Runner 层按累计 sample 的绝对音频时间轴执行，并在首包真正准备发送时 lazy 建立 audio clock，WAV source 只负责切包；输出 init/decode/total timing，不经过 legacy importer/VAD。
 - `[已完成]` `UnifiedAsrScorer` + CSV：输出 CER、混合词 WER、脚本级 code-switch error、专业词/姓名 Recall 与 False Discovery Rate、First Partial/Final、`steadyStateRtf` 和可选设备指标；CSV 记录 profile/artifact/run/mode/packet/timing、`scorer_version=1`、`normalization_profile=mixed-zh-en-v1`，不保存参考/识别正文。
 - `[已完成]` AudioRecord stop 边界：显式 stop 后平台负读码视为 graceful EOF，正常运行期间负读码仍保持 typed failure。
-- `[待补]` X-ASR/small bilingual 的真实 artifact、许可证、配置和 hash；未核实前不加入 profile。
-- `[待补]` debug-only model importer 或受控 `run-as` 导入 seam；不把 replay 绑定到直接写应用私有目录。
-- `[待补]` 固定金融课堂 corpus、reference transcript、warm-up/交错顺序记录和 K80 E2E 采集。
+- `[已完成]` small bilingual 官方 artifact、许可证、配置和四文件 size/SHA-256；已加入 `SMALL_BILINGUAL_ZH_EN` profile，仍不作为默认 live profile。
+- `[已完成]` debug-only model importer：只在 debug source set 提供按 profile 导入外部四文件的私有目录 seam；replay 不绑定直接写应用私有目录。
+- `[已完成]` X-ASR 官方 Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 480/960 两个 deployment artifact、许可证、配置和四文件 size/SHA-256；已加入 `X_ASR_480`/`X_ASR_960` profile，未打入 APK。
+- `[已完成]` 两个 X-ASR profile 均按官方 deployment config 完成 host smoke；在此之前未运行正式 A/B。
+- `[部分完成]` 用同一官方 `test_wavs/0.wav` 完成 A/B/C/D 的 1-clip FAST smoke 和 41 列 scorer CSV；结果只作流程/初筛证据，因不含姓名和金融术语且不是课堂录音，不能替代固定金融课堂 corpus。
+- `[待补]` 固定金融课堂 corpus、reference transcript、扩大样本后的 FAST 结果、warm-up/交错顺序记录和 K80 E2E 采集。
 
 ## Bug 分流
 

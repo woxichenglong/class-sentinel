@@ -78,8 +78,8 @@ internal data class ModelRecognizerProfile(
     val blankPenalty: Float = 0.0f,
 ) {
     init {
-        require(modelType.isNotBlank()) { "MODEL_TYPE_INVALID" }
-        require(modelingUnit.isNotBlank()) { "MODEL_MODELING_UNIT_INVALID" }
+        // The official legacy bilingual Zipformer deployment leaves both fields empty so
+        // sherpa infers the transducer contract from the three model paths.
         require(decodingMethod.isNotBlank()) { "MODEL_DECODING_METHOD_INVALID" }
         require(provider.isNotBlank()) { "MODEL_PROVIDER_INVALID" }
         require(sampleRate > 0) { "MODEL_SAMPLE_RATE_INVALID" }
@@ -180,5 +180,204 @@ internal object ModelProfiles {
             codeSwitch = false,
         ),
         evaluationLabel = "baseline-zh-14m",
+    )
+
+    val SMALL_BILINGUAL_ZH_EN = ModelProfile(
+        id = "sherpa-small-bilingual-zh-en",
+        version = "2023-02-16",
+        artifact = ModelArtifact(
+            directory = "small-bilingual-zh-en-2023-02-16",
+            encoder = ModelFileSpec(
+                name = "encoder-epoch-99-avg-1.int8.onnx",
+                expectedSize = 42_980_793L,
+                sha256 = "db6f51551762e40e549166fe041ea3e45464370b595e9ad23f06478ec3794fbb",
+            ),
+            decoder = ModelFileSpec(
+                name = "decoder-epoch-99-avg-1.onnx",
+                expectedSize = 13_877_276L,
+                sha256 = "89be509a83175261695bdef5fd1c7b9ab1129a663d1284e7ba9f8507b21e0906",
+            ),
+            joiner = ModelFileSpec(
+                name = "joiner-epoch-99-avg-1.int8.onnx",
+                expectedSize = 3_228_485L,
+                sha256 = "bdda356d6f9b8c2d7cee9ee0e26075fa537490f7fd06520be408d287073667b9",
+            ),
+            tokens = ModelFileSpec(
+                name = "tokens.txt",
+                expectedSize = 56_317L,
+                sha256 = "a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3",
+            ),
+        ),
+        recognizer = ModelRecognizerProfile(
+            // The official command leaves both values empty for this legacy model.
+            modelType = "",
+            modelingUnit = "",
+            decodingMethod = "greedy_search",
+            provider = "cpu",
+            sampleRate = 16_000,
+            featureDim = 80,
+            endpoint = ModelEndpointProfile(
+                rule1 = ModelEndpointRule(
+                    mustContainNonSilence = false,
+                    minTrailingSilence = 2.4f,
+                    minUtteranceLength = 0.0f,
+                ),
+                rule2 = ModelEndpointRule(
+                    mustContainNonSilence = true,
+                    minTrailingSilence = 1.2f,
+                    minUtteranceLength = 0.0f,
+                ),
+                rule3 = ModelEndpointRule(
+                    mustContainNonSilence = false,
+                    minTrailingSilence = 0.0f,
+                    minUtteranceLength = 20.0f,
+                ),
+            ),
+            // The root export's "32" is a model chunk length, not milliseconds.
+            artifactStreamingChunkMs = null,
+            enableEndpoint = true,
+            maxActivePaths = 4,
+            hotwordsScore = 1.5f,
+        ),
+        capabilities = ModelCapabilities(
+            zh = true,
+            en = true,
+            streaming = true,
+            hotwords = true,
+            codeSwitch = true,
+        ),
+        evaluationLabel = "small-bilingual-zh-en",
+    )
+
+    val X_ASR_480 = ModelProfile(
+        id = "x-asr-480",
+        version = "689ff18c584d29910da37b6fe904db0c1489c9d1",
+        artifact = ModelArtifact(
+            directory = "x-asr-zh-en-480ms",
+            encoder = ModelFileSpec(
+                name = "encoder-480ms.onnx",
+                expectedSize = 592_968_361L,
+                sha256 = "0c3454033d249081df124ddcd7adaf3deca07d0b999b26f2ee5d2475d37abc74",
+            ),
+            decoder = ModelFileSpec(
+                name = "decoder-480ms.onnx",
+                expectedSize = 11_309_084L,
+                sha256 = "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499",
+            ),
+            joiner = ModelFileSpec(
+                name = "joiner-480ms.onnx",
+                expectedSize = 10_260_467L,
+                sha256 = "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81",
+            ),
+            tokens = ModelFileSpec(
+                name = "tokens.txt",
+                expectedSize = 58_806L,
+                sha256 = "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c",
+            ),
+        ),
+        recognizer = ModelRecognizerProfile(
+            modelType = "zipformer2",
+            // The official deployment wrapper omits modeling_unit; keep the runtime default.
+            modelingUnit = "",
+            decodingMethod = "greedy_search",
+            provider = "cpu",
+            sampleRate = 16_000,
+            featureDim = 80,
+            endpoint = ModelEndpointProfile(
+                rule1 = ModelEndpointRule(
+                    mustContainNonSilence = false,
+                    minTrailingSilence = 2.4f,
+                    minUtteranceLength = 0.0f,
+                ),
+                rule2 = ModelEndpointRule(
+                    mustContainNonSilence = true,
+                    minTrailingSilence = 1.2f,
+                    minUtteranceLength = 0.0f,
+                ),
+                rule3 = ModelEndpointRule(
+                    mustContainNonSilence = false,
+                    minTrailingSilence = 0.0f,
+                    minUtteranceLength = 20.0f,
+                ),
+            ),
+            artifactStreamingChunkMs = 480,
+            enableEndpoint = false,
+            maxActivePaths = 4,
+            hotwordsScore = 1.5f,
+        ),
+        capabilities = ModelCapabilities(
+            zh = true,
+            en = true,
+            streaming = true,
+            hotwords = true,
+            codeSwitch = true,
+        ),
+        evaluationLabel = "x-asr-zh-en-480ms",
+    )
+
+    val X_ASR_960 = ModelProfile(
+        id = "x-asr-960",
+        version = "689ff18c584d29910da37b6fe904db0c1489c9d1",
+        artifact = ModelArtifact(
+            directory = "x-asr-zh-en-960ms",
+            encoder = ModelFileSpec(
+                name = "encoder-960ms.onnx",
+                expectedSize = 592_966_960L,
+                sha256 = "dd9484b7c34c951495f3420f26f9f2ab706e748bc087cd14dfe0b90d3156264f",
+            ),
+            decoder = ModelFileSpec(
+                name = "decoder-960ms.onnx",
+                expectedSize = 11_309_084L,
+                sha256 = "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499",
+            ),
+            joiner = ModelFileSpec(
+                name = "joiner-960ms.onnx",
+                expectedSize = 10_260_467L,
+                sha256 = "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81",
+            ),
+            tokens = ModelFileSpec(
+                name = "tokens.txt",
+                expectedSize = 58_806L,
+                sha256 = "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c",
+            ),
+        ),
+        recognizer = ModelRecognizerProfile(
+            modelType = "zipformer2",
+            // The official deployment wrapper omits modeling_unit; keep the runtime default.
+            modelingUnit = "",
+            decodingMethod = "greedy_search",
+            provider = "cpu",
+            sampleRate = 16_000,
+            featureDim = 80,
+            endpoint = ModelEndpointProfile(
+                rule1 = ModelEndpointRule(
+                    mustContainNonSilence = false,
+                    minTrailingSilence = 2.4f,
+                    minUtteranceLength = 0.0f,
+                ),
+                rule2 = ModelEndpointRule(
+                    mustContainNonSilence = true,
+                    minTrailingSilence = 1.2f,
+                    minUtteranceLength = 0.0f,
+                ),
+                rule3 = ModelEndpointRule(
+                    mustContainNonSilence = false,
+                    minTrailingSilence = 0.0f,
+                    minUtteranceLength = 20.0f,
+                ),
+            ),
+            artifactStreamingChunkMs = 960,
+            enableEndpoint = false,
+            maxActivePaths = 4,
+            hotwordsScore = 1.5f,
+        ),
+        capabilities = ModelCapabilities(
+            zh = true,
+            en = true,
+            streaming = true,
+            hotwords = true,
+            codeSwitch = true,
+        ),
+        evaluationLabel = "x-asr-zh-en-960ms",
     )
 }

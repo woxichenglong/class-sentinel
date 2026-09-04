@@ -11,13 +11,13 @@
 
 | 检查 | 命令/依据 | 结果 |
 |---|---|---|
-| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 85 个测试类、437 个用例；失败 0、错误 0、跳过 0 |
-| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，170,883,379 bytes；SHA-256：`104e813e0fac178fa25c692d2af7e316a2932c5019aa4821cd3f19fb41aea266` |
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 86 个测试类、446 个用例；失败 0、错误 0、跳过 0 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，223,624,523 bytes；SHA-256：`2d86d21499b18ec053bce7e02644b15edaae3bc5743f4007240764031591310a` |
 | 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 15 个，消费者 key 15 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
 | Android Lint | `./gradlew :app:lintDebug --rerun-tasks` | 文本报告为 `No issues found.` |
-| K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 最终 APK hash 一致；Android 16/API 36，冷启动约 977 ms，无 app 崩溃/ANR |
+| K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 旧版 APK 曾通过；本次新增模型后的 APK 尚未重装/实测，当前 ADB 无在线设备 |
 
 密钥扫描的边界也已记录：生产代码没有实际凭证命中；当前测试代码包含讯飞公开签名示例和合成测试 key，不能当作生产密钥。
 
@@ -30,6 +30,7 @@
 - `AudioRecord` 以 16 kHz 单声道 PCM 采集；实时主链经 `StreamingSpeechEngine` 进入本地 sherpa-onnx 连续流式识别，保留 decoder 状态，不由 VAD 切成 HTTP 请求。
 - `StreamingAsrEvent` 区分可替换的 `Partial` 和权威的 `Final`；只有 `Final` 进入事件检测、历史和 LLM，失败事件只携带封闭的安全错误类别。
 - 旧 `VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和讯飞适配器暂留在 WAV 导入/pending recovery 边界；它们不作为实时课堂链路的 fallback。
+- 评测 profile 另包含官方 small bilingual Zipformer（已打包但不改变默认 live 选择）以及 X-ASR-zh-en 的 480/960 ms Zipformer2（仅 build 临时目录 + debug importer/replay，不打包到 APK）；正式 A/B 前必须先通过两个 profile 的官方 deployment smoke。
 - 点名支持名字表和拼音/同音变体；提问检测和滚动课堂上下文均有代码路径和 JVM 测试，实时提醒当前只保留振动与系统通知。
 
 ### 会话生命周期、通知与界面状态
@@ -183,7 +184,7 @@ app/src/main/java/com/classsentinel/
 
 ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a local sherpa-onnx streaming ASR engine, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate (437 tests across 85 test classes), a clean Android Lint report, and a successful debug APK build. A K80 install/cold-start/permission smoke has run, but this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate (446 tests across 86 test classes), a clean Android Lint report, and a successful debug APK build. A previous APK passed a K80 install/cold-start/permission smoke; the current APK containing the small-bilingual asset has not been installed on K80 yet. This is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

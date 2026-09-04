@@ -107,4 +107,67 @@ class SherpaOnnxRecognizerConfigTest {
         assertEquals(0.7f, config.endpointConfig.rule2.minTrailingSilence, 0.0f)
         assertEquals(12.0f, config.endpointConfig.rule3.minUtteranceLength, 0.0f)
     }
+
+    @Test
+    fun `config maps official small bilingual profile without inventing model type`() {
+        val modelDir = File("/data/user/0/com.classsentinel/files/asr/small-bilingual-zh-en-2023-02-16")
+
+        val config = SherpaOnnxRecognizerFactory.buildConfig(
+            modelDirectory = modelDir,
+            profile = ModelProfiles.SMALL_BILINGUAL_ZH_EN,
+        )
+        val model = config.modelConfig
+        val transducer = model.transducer
+
+        assertEquals("", model.modelType)
+        assertEquals("", model.modelingUnit)
+        assertEquals("cpu", model.provider)
+        assertEquals("greedy_search", config.decodingMethod)
+        assertEquals(16_000, config.featConfig.sampleRate)
+        assertEquals(80, config.featConfig.featureDim)
+        assertEquals(
+            File(modelDir, "encoder-epoch-99-avg-1.int8.onnx").path,
+            transducer.encoder,
+        )
+        assertEquals(
+            File(modelDir, "decoder-epoch-99-avg-1.onnx").path,
+            transducer.decoder,
+        )
+        assertEquals(
+            File(modelDir, "joiner-epoch-99-avg-1.int8.onnx").path,
+            transducer.joiner,
+        )
+        assertEquals(File(modelDir, "tokens.txt").path, model.tokens)
+        assertEquals(2.4f, config.endpointConfig.rule1.minTrailingSilence, 0.0f)
+        assertEquals(1.2f, config.endpointConfig.rule2.minTrailingSilence, 0.0f)
+        assertEquals(20.0f, config.endpointConfig.rule3.minUtteranceLength, 0.0f)
+        assertEquals(1.5f, config.hotwordsScore, 0.0f)
+    }
+
+    @Test
+    fun `config maps both x asr chunk profiles to their matching model files`() {
+        val cases = listOf(
+            ModelProfiles.X_ASR_480 to "x-asr-zh-en-480ms",
+            ModelProfiles.X_ASR_960 to "x-asr-zh-en-960ms",
+        )
+
+        cases.forEach { (profile, directory) ->
+            val modelDir = File("/data/user/0/com.classsentinel/files/asr/$directory")
+            val config = SherpaOnnxRecognizerFactory.buildConfig(modelDir, profile)
+            val model = config.modelConfig
+            val transducer = model.transducer
+
+            assertEquals("zipformer2", model.modelType)
+            assertEquals("", model.modelingUnit)
+            assertEquals("cpu", model.provider)
+            assertEquals("greedy_search", config.decodingMethod)
+            assertEquals(false, config.enableEndpoint)
+            assertEquals(16_000, config.featConfig.sampleRate)
+            assertEquals(80, config.featConfig.featureDim)
+            assertEquals(File(modelDir, profile.artifact.encoder.name).path, transducer.encoder)
+            assertEquals(File(modelDir, profile.artifact.decoder.name).path, transducer.decoder)
+            assertEquals(File(modelDir, profile.artifact.joiner.name).path, transducer.joiner)
+            assertEquals(File(modelDir, profile.artifact.tokens.name).path, model.tokens)
+        }
+    }
 }

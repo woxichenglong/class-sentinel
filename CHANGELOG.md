@@ -16,10 +16,17 @@
 ### 验证
 
 - P1/P2 focused regression：51 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：85 个测试类、437 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：86 个测试类、446 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
-- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`，当前只锁定 14M baseline，未内置 X-ASR 资产。
-- 本轮 Debug APK：170,883,379 bytes；SHA-256 为 `104e813e0fac178fa25c692d2af7e316a2932c5019aa4821cd3f19fb41aea266`。
+- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍锁定 14M baseline；small bilingual 作为显式实验 profile，X-ASR 480/960 作为 debug importer/replay profile，X-ASR 大文件未内置进 APK。
+- 本轮 Debug APK：223,624,523 bytes；SHA-256 为 `2d86d21499b18ec053bce7e02644b15edaae3bc5743f4007240764031591310a`。
+
+### 模型实验门
+
+- 加入官方 small bilingual Zipformer 的四文件 INT8/decoder-fp32 artifact、`SMALL_BILINGUAL_ZH_EN` profile 和 debug-only 外部模型 importer；默认 live 仍使用 14M baseline。
+- 加入 X-ASR-zh-en immutable Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 `X_ASR_480`/`X_ASR_960` profile；两个 profile 均先通过官方 deployment CPU smoke，X-ASR 大文件未进入 APK。
+- A/B/C/D 初始 FAST 只使用同一官方 `test_wavs/0.wav`（1 个公开样本），通过 Kotlin `UnifiedAsrScorer` 生成 41 列 CSV；该结果是流程/初筛证据，不替代金融课堂 corpus，也不构成 K80 winner 决定。
+- 本次新 APK 尚未在 K80 重装；旧 APK 的 K80 安装/cold-start 记录不适用于本次模型资产变更。
 
 ## [Unreleased] — v0.3.0 可靠性、学习产物与音频工作流（2026-09-03）
 
