@@ -29,3 +29,6 @@ app/build/
 credentials/
 secrets/
 .worktrees/
+
+# Hermes workspace metadata and local plans may contain machine paths or session data.
+.hermes/
