@@ -66,6 +66,19 @@ class DebugModelImporterTest {
         }
     }
 
+    @Test
+    fun `debug import command resolves an allowlisted daily profile and absolute source`() {
+        val source = Files.createTempDirectory("debug-model-command-source-").toFile()
+        try {
+            val request = parseDebugModelImportRequest(ModelProfiles.X_ASR_480.id, source.absolutePath)
+
+            assertEquals(ModelProfiles.X_ASR_480.id, request.profile.id)
+            assertEquals(source.canonicalFile, request.sourceDirectory.canonicalFile)
+        } finally {
+            source.deleteRecursively()
+        }
+    }
+
     private fun testProfile(): ModelProfile {
         val base = ModelProfiles.SMALL_BILINGUAL_ZH_EN
         return base.copy(
