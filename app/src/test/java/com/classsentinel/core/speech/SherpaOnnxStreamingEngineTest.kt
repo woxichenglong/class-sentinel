@@ -45,8 +45,28 @@ class SherpaOnnxStreamingEngineTest {
         assertTrue(events.none { it is StreamingAsrEvent.Failed })
     }
 
+    @Test
+    fun `normal completion flushes pending utterance as final`() = runTest {
+        val stream = FlushStream()
+        val engine = SherpaOnnxStreamingEngine(
+            recognizerFactory = { FakeRecognizer(stream) },
+        )
+
+        val events = engine.transcribe(flowOf(shortArrayOf(100))).toList()
+
+        assertEquals(
+            listOf(
+                StreamingAsrEvent.Partial(1, "尾句", 0L),
+                StreamingAsrEvent.Final(1, "尾句", 0L, 0L),
+            ),
+            events,
+        )
+        assertEquals(1, stream.inputFinishedCalls)
+        assertEquals(1, stream.decodeCalls)
+    }
+
     private class FakeRecognizer(
-        private val fakeStream: FakeStream,
+        private val fakeStream: SherpaOnlineStreamPort,
     ) : SherpaOnlineRecognizerPort {
         var releaseCalls = 0
 
@@ -100,5 +120,33 @@ class SherpaOnnxStreamingEngineTest {
         override fun release() {
             releaseCalls++
         }
+    }
+
+    private class FlushStream : SherpaOnlineStreamPort {
+        var inputFinishedCalls = 0
+        var decodeCalls = 0
+        private var readyFrames = 0
+
+        override fun acceptWaveform(samples: FloatArray, sampleRate: Int) = Unit
+
+        override fun isReady(): Boolean = readyFrames > 0
+
+        override fun decode() {
+            decodeCalls++
+            readyFrames--
+        }
+
+        override fun resultText(): String = "尾句"
+
+        override fun isEndpoint(): Boolean = false
+
+        override fun reset() = Unit
+
+        override fun inputFinished() {
+            inputFinishedCalls++
+            readyFrames = 1
+        }
+
+        override fun release() = Unit
     }
 }

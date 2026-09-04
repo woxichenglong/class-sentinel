@@ -4,12 +4,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
-/** Streaming ASR contract used by the live listening pipeline. */
-internal interface StreamingSpeechEngine {
-    val name: String
-    fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent>
-}
-
 /**
  * Continuous sherpa-onnx recognizer adapter.
  *
@@ -33,6 +27,8 @@ internal class SherpaOnnxStreamingEngine(
         var utteranceId = 1
         var utteranceStartOffsetMs = 0L
         var lastPartialText: String? = null
+        var hasPendingAudio = false
+        var inputFinished = false
 
         try {
             recognizer = recognizerFactory()
@@ -47,6 +43,7 @@ internal class SherpaOnnxStreamingEngine(
                 }
                 activeStream.acceptWaveform(normalized, sampleRate)
                 totalSamples += chunk.size.toLong()
+                hasPendingAudio = true
 
                 while (activeStream.isReady()) {
                     activeStream.decode()
@@ -69,6 +66,7 @@ internal class SherpaOnnxStreamingEngine(
                     utteranceId++
                     utteranceStartOffsetMs = offsetMs
                     lastPartialText = null
+                    hasPendingAudio = false
                 } else if (text.isNotBlank() && text != lastPartialText) {
                     emit(
                         StreamingAsrEvent.Partial(
@@ -80,13 +78,33 @@ internal class SherpaOnnxStreamingEngine(
                     lastPartialText = text
                 }
             }
+
+            activeStream.inputFinished()
+            inputFinished = true
+            if (hasPendingAudio) {
+                while (activeStream.isReady()) {
+                    activeStream.decode()
+                }
+                val finalText = activeStream.resultText()
+                val endOffsetMs = totalSamples * 1_000L / sampleRate
+                if (finalText.isNotBlank()) {
+                    emit(
+                        StreamingAsrEvent.Final(
+                            utteranceId = utteranceId,
+                            text = finalText,
+                            startOffsetMs = utteranceStartOffsetMs,
+                            endOffsetMs = endOffsetMs,
+                        ),
+                    )
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            emit(StreamingAsrEvent.Failed("ASR_RUNTIME"))
+            emit(StreamingAsrEvent.Failed(StreamingAsrErrorKind.ASR_RUNTIME))
         } finally {
             stream?.let { activeStream ->
-                runCatching { activeStream.inputFinished() }
+                if (!inputFinished) runCatching { activeStream.inputFinished() }
                 runCatching { activeStream.release() }
             }
             recognizer?.let { activeRecognizer ->

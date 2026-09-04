@@ -2,6 +2,25 @@
 
 本文件记录 v0.3.0 工作树中已经落地并有自动化证据的变化。真实 Android 设备、MIUI 行为和第三方服务准确率不会从 JVM 测试结果推断。
 
+## [Unreleased] — ASR 架构重构期
+
+### 边界收敛
+
+- 实时主链固定为 `AudioStreamer → StreamingSpeechEngine → StreamingListenPipeline → final-only service adapter → EventEngine/DB/Alert`。
+- 实时 ASR 使用本地 sherpa-onnx 连续流式实现；`Partial` 只更新展示，`Final` 才进入事件检测、历史和 LLM。
+- `StreamingAsrEvent.Failed` 改为只接受封闭的 `StreamingAsrErrorKind`，避免任意异常文本跨越 live 边界。
+- `StreamingListenPipeline` 收到失败事件后进入终态 `Error`，迟到 ASR 事件不能把状态覆盖回 `Listening`。
+- 旧 `SpeechEngine`、`VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和 fallback 暂留在 WAV 导入/pending recovery 边界，不作为实时链路 fallback；删除前必须先证明无生产引用。
+- 新增 `docs/asr-refactor-checklist.md`，记录保留、隔离、删除候选、接口守护规则和下一切片准入条件。
+
+### 验证
+
+- P1 focused regression：47 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：84 个测试类、424 个用例，失败 0、错误 0、跳过 0。
+- live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
+- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、统一 scorer 和 34 列 CSV 输出；当前只锁定 14M baseline，未内置 X-ASR 资产。
+- 本轮 Debug APK：170,866,995 bytes；SHA-256 为 `dd70c6ccfadb840ba0f30606ee6940f84e2a45945cfb4e2769b462bb0500f76b`。
+
 ## [Unreleased] — v0.3.0 可靠性、学习产物与音频工作流（2026-09-03）
 
 ### 新增与修复

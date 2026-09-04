@@ -23,5 +23,10 @@ sealed interface StreamingAsrEvent {
     data class Recovering(val reason: String) : StreamingAsrEvent
 
     /** Safe category only; never store raw audio, transcript, provider body, or credentials here. */
-    data class Failed(val errorKind: String) : StreamingAsrEvent
+    data class Failed(val errorKind: StreamingAsrErrorKind) : StreamingAsrEvent
+}
+
+/** Closed set of live-ASR failure categories safe to cross the pipeline boundary. */
+enum class StreamingAsrErrorKind {
+    ASR_RUNTIME,
 }

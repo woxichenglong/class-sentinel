@@ -58,6 +58,7 @@ class ListenPipeline(
         collectorJob?.takeIf { it.isActive }?.let { return it }
         synchronized(this) {
             collectorJob?.takeIf { it.isActive }?.let { return it }
+            streamer.prepareForCapture()
             sessionStartedAtMs = nowMillis()
             lastElapsedMs = 0L
             sentences = 0

@@ -1,7 +1,7 @@
 # 课堂哨兵 ClassSentinel
 
 > 大学课堂 AI 助手：后台听讲转写，老师点名/提问时提醒并生成回答，课后保存课程历史与可选总结。
-> 当前文档对应 **v0.3.0 Unreleased：可靠性、学习产物与音频工作流增量**。自动化质量门已跑通，K80 已完成安装/冷启动/权限 smoke；完整真机/MIUI 业务验收尚未完成。
+> 当前文档对应 **ASR 架构重构期**：实时主链已切到本地 sherpa-onnx 连续流式接线；旧 VAD/HTTP ASR 只保留在 WAV 导入与 pending recovery 边界。自动化质量门已跑通；完整真机/MIUI 业务验收尚未完成。
 
 [English summary](#english)
 
@@ -11,9 +11,9 @@
 
 | 检查 | 命令/依据 | 结果 |
 |---|---|---|
-| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 62 个测试套件、347 个用例；失败 0、错误 0、跳过 0 |
-| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，18,351,207 bytes；SHA-256：`b719c02be6157a3457acf3a621d75e257c2c07c5a2c12f66e609a0cc662adae0` |
-| 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 26 个，消费者 key 26 个，集合精确相等 |
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 84 个测试类、424 个用例；失败 0、错误 0、跳过 0 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，170,866,995 bytes；SHA-256：`dd70c6ccfadb840ba0f30606ee6940f84e2a45945cfb4e2769b462bb0500f76b` |
+| 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 15 个，消费者 key 15 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
 | Android Lint | `./gradlew :app:lintDebug --rerun-tasks` | 文本报告为 `No issues found.` |
@@ -27,10 +27,10 @@
 
 ### 听讲、分段与 ASR
 
-- `AudioRecord` 以 16 kHz 单声道 PCM 采集；VAD 负责静音切段，并生成带稳定 ID、起止偏移和 WAV 字节的 `WavSegment`。
-- XingChenASR-V3.2-Ultra/SenseVoice 走按片段请求的 HTTP ASR 路径；片段失败时只重试/切换当前片段，不重放已经成功的片段。
-- 讯飞 RTASR 保留独立的流式适配器，错误、超时和取消会变成显式失败状态，不再只打印错误。
-- 点名支持名字表和拼音/同音变体；提问检测、滚动课堂上下文、五类提醒通道（震动、铃声、系统通知、全屏闪屏、耳机提示音）均有代码路径和 JVM 测试。
+- `AudioRecord` 以 16 kHz 单声道 PCM 采集；实时主链经 `StreamingSpeechEngine` 进入本地 sherpa-onnx 连续流式识别，保留 decoder 状态，不由 VAD 切成 HTTP 请求。
+- `StreamingAsrEvent` 区分可替换的 `Partial` 和权威的 `Final`；只有 `Final` 进入事件检测、历史和 LLM，失败事件只携带封闭的安全错误类别。
+- 旧 `VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和讯飞适配器暂留在 WAV 导入/pending recovery 边界；它们不作为实时课堂链路的 fallback。
+- 点名支持名字表和拼音/同音变体；提问检测和滚动课堂上下文均有代码路径和 JVM 测试，实时提醒当前只保留振动与系统通知。
 
 ### 会话生命周期、通知与界面状态
 
@@ -55,12 +55,12 @@
 - Quick Settings Tile 直接读取权威 `PipelineState`；未配置时保持可点击并回到引导/自检，不把 `STATE_UNAVAILABLE` 当作配置提示的替代品。
 - 以上功能已有 JVM 合约测试；系统文件选择器、MediaPlayer、Tile 点击和 MIUI 后台行为仍需 Android 真机验收。
 
-## 离线恢复不是离线识别
+## 实时本地 ASR 与旧分段恢复边界
 
 当前实现的边界要说清楚：
 
-1. **断网时不会在手机本地完成 ASR。** ASR 和 LLM 仍需要用户配置的云端/兼容服务。
-2. 某一个 WAV 片段最终转写失败时，只把这个失败片段写入应用私有的 `noBackupFilesDir/pending-audio`，不默认保存整节课录音。
+1. **实时课堂 ASR 走本地 sherpa-onnx 连续流式链。** 这只解决实时转写的本地推理路径；答案生成仍可能需要用户配置的 LLM 服务。
+2. WAV 导入或旧链路某个片段最终失败时，才把该失败片段写入应用私有的 `noBackupFilesDir/pending-audio`，不默认保存整节课录音。
 3. `PendingTranscriptionWorker` 使用 WorkManager 的 `CONNECTED` 网络约束、指数退避和有界尝试次数；网络恢复后再按 `createdTs` 顺序转写，成功写入 Room 后才删除待处理文件。
 4. 缺失/损坏文件、认证/配置错误会进入可见的终态失败，不会无限重试；WorkManager Data 不携带 API key、音频、文件路径或转写正文。
 
@@ -89,17 +89,15 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 
 ## 设置项的真实行为
 
-设置页当前可见设置与生产消费者矩阵严格对应（26/26），不是“能保存但运行时无效果”的占位项：
+设置页当前可见设置与生产消费者矩阵严格对应（15/15），不是“能保存但运行时无效果”的占位项：
 
 | 分组 | 已接入行为 |
 |---|---|
 | 点名/提问 | 名字与变体、匹配灵敏度、点名/提问抑制窗口、提问词等级 |
-| 语音 | VAD 阈值、分段最长时长、ASR 引擎选择、硅基流动 ASR key |
-| 提醒 | 五个通道开关、锁屏通知开关、震动模式；铃声音量由系统控制，本版本不修改全局音量 |
+| 本地 ASR | sherpa-onnx 模型状态与实时本地转写；旧 VAD/HTTP ASR 只在导入/恢复边界使用 |
+| 提醒 | 振动与系统通知两个通道、锁屏内容固定隐藏、震动模式；不修改系统音量 |
 | AI | Base URL、AI key、模型、回答长度、答案风格、流式输出 |
-| 总结 | 自动总结开关、内置/自定义模板及长度受限的自定义要求 |
-| 数据 | 7/30/90 天或永久保留、确认后清空历史 |
-| 通用 | 跟随系统/深色/浅色模式、自检调试页入口 |
+| 数据/通用 | 清空问答历史、跟随系统/深色/浅色模式 |
 
 ### API key 存储与迁移
 
@@ -110,7 +108,7 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 ## 隐私边界与明确不做的事
 
 - 课程、事件、转写、设置和待处理片段默认留在本机；应用关闭系统云备份（`allowBackup=false`）。
-- 只有在相应功能执行时，音频片段/转写或问题文本才会发送到用户配置的 ASR/LLM 服务；项目不提供云同步、团队共享、订阅或计费。
+- 实时课堂 ASR 在本地执行；WAV 导入/pending recovery 和答案/总结等功能才会按配置访问相应 ASR/LLM 服务。项目不提供云同步、团队共享、订阅或计费。
 - 不申请 `MANAGE_EXTERNAL_STORAGE`，不使用 AccessibilityService、MediaProjection、开机自动录音，也不做微信/QQ 通话录音。
 - 当前 v0.3.0 正式纳入闪卡、小测、双语复习、音频回放、WAV 导入和 Quick Settings Tile；这些路径已通过 JVM 合约测试，但尚未完成真机行为验收。
 
@@ -160,7 +158,7 @@ Windows 命令提示符或 PowerShell 可将 `./gradlew` 替换为 `gradlew.bat`
 ```text
 app/src/main/java/com/classsentinel/
 ├── core/audio       # AudioRecord、VAD、WAV 分段、失败片段私有存储
-├── core/speech      # ASR 引擎、错误模型、分段路由与 fallback
+├── core/speech      # 流式 ASR 契约、本地 sherpa 实现、legacy 分段路由
 ├── core/context     # 最近课堂上下文
 ├── core/detect      # 点名/提问检测
 ├── core/alert       # 震动、铃声、通知、闪屏、耳机提醒
@@ -183,9 +181,9 @@ app/src/main/java/com/classsentinel/
 
 ## English
 
-ClassSentinel is an Android classroom assistant. It captures lecture audio in the foreground, segments it for configurable ASR providers, detects name calls and questions, presents alerts, and stores course history locally. Optional summaries use a user-configured OpenAI-compatible LLM.
+ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a local sherpa-onnx streaming ASR engine, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The v0.3.0 reliability and study-workflow slice has a verified JVM gate (347 tests across 62 suites), a clean Android Lint report, and a successful debug APK build. A K80 install/cold-start/permission smoke has run, but this is not a device certification: MIUI background limits, real provider accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate (424 tests across 84 test classes), a clean Android Lint report, and a successful debug APK build. A K80 install/cold-start/permission smoke has run, but this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

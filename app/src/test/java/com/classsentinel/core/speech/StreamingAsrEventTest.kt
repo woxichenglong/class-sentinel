@@ -36,13 +36,22 @@ class StreamingAsrEventTest {
 
     @Test
     fun `failed contains only safe error category`() {
-        val event: StreamingAsrEvent = StreamingAsrEvent.Failed("ASR_RUNTIME")
+        val event: StreamingAsrEvent = StreamingAsrEvent.Failed(StreamingAsrErrorKind.ASR_RUNTIME)
 
         assertTrue(event is StreamingAsrEvent.Failed)
-        assertEquals("ASR_RUNTIME", (event as StreamingAsrEvent.Failed).errorKind)
+        val failed = event as StreamingAsrEvent.Failed
+        assertEquals(StreamingAsrErrorKind.ASR_RUNTIME, failed.errorKind)
+        assertEquals("ASR_RUNTIME", failed.errorKind.name)
         assertTrue(event.toString().contains("ASR_RUNTIME"))
         assertTrue(!event.toString().contains("课堂"))
         assertTrue(!event.toString().contains("api-key"))
+    }
+
+    @Test
+    fun `failed error kind is a closed safe category`() {
+        val kind = StreamingAsrErrorKind.ASR_RUNTIME
+
+        assertEquals("ASR_RUNTIME", kind.name)
     }
 
     @Test

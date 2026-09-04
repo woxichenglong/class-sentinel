@@ -179,6 +179,7 @@ private class SessionPipelineAdapter(
     override suspend fun start() {
         if (collector?.isActive == true) return
         val courseId = store.currentCourseId() ?: return
+        eventEngine.resetSession()
         // 新课程/新会话开始时清空滚动上下文缓冲，避免跨课程残留。
         contextBuffer.clear()
         // 先注册唯一源收集器（UNDISPATCHED 立即订阅），再启动管线，避免漏句。

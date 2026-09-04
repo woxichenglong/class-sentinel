@@ -12,60 +12,65 @@ import java.io.File
 
 /** Builds the pinned v1.13.7 CPU/MLAS configuration and adapts its native API. */
 internal object SherpaOnnxRecognizerFactory {
-    const val MODEL_DIRECTORY_NAME = "zipformer-zh-14M-2023-02-23"
-
-    fun buildConfig(modelDirectory: File): OnlineRecognizerConfig {
+    fun buildConfig(
+        modelDirectory: File,
+        profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+    ): OnlineRecognizerConfig {
+        val artifact = profile.artifact
+        val recognizer = profile.recognizer
         val transducer = OnlineTransducerModelConfig(
-            encoder = File(modelDirectory, "encoder-epoch-99-avg-1.int8.onnx").path,
-            decoder = File(modelDirectory, "decoder-epoch-99-avg-1.onnx").path,
-            joiner = File(modelDirectory, "joiner-epoch-99-avg-1.int8.onnx").path,
+            encoder = File(modelDirectory, artifact.encoder.name).path,
+            decoder = File(modelDirectory, artifact.decoder.name).path,
+            joiner = File(modelDirectory, artifact.joiner.name).path,
         )
         return OnlineRecognizerConfig(
-            featConfig = FeatureConfig(sampleRate = 16_000, featureDim = 80),
+            featConfig = FeatureConfig(
+                sampleRate = recognizer.sampleRate,
+                featureDim = recognizer.featureDim,
+            ),
             modelConfig = OnlineModelConfig(
                 transducer = transducer,
-                tokens = File(modelDirectory, "tokens.txt").path,
-                provider = "cpu",
-                modelType = "zipformer",
-                modelingUnit = "cjkchar",
+                tokens = File(modelDirectory, artifact.tokens.name).path,
+                provider = recognizer.provider,
+                modelType = recognizer.modelType,
+                modelingUnit = recognizer.modelingUnit,
             ),
-            endpointConfig = EndpointConfig(
-                rule1 = EndpointRule(
-                    mustContainNonSilence = false,
-                    minTrailingSilence = 2.4f,
-                    minUtteranceLength = 0.0f,
-                ),
-                rule2 = EndpointRule(
-                    mustContainNonSilence = true,
-                    minTrailingSilence = 1.4f,
-                    minUtteranceLength = 0.0f,
-                ),
-                rule3 = EndpointRule(
-                    mustContainNonSilence = false,
-                    minTrailingSilence = 0.0f,
-                    minUtteranceLength = 20.0f,
-                ),
-            ),
-            enableEndpoint = true,
-            decodingMethod = "greedy_search",
-            maxActivePaths = 4,
-            hotwordsFile = "",
-            hotwordsScore = 0.0f,
-            ruleFsts = "",
-            ruleFars = "",
-            blankPenalty = 0.0f,
+            endpointConfig = recognizer.endpoint.toSherpaConfig(),
+            enableEndpoint = recognizer.enableEndpoint,
+            decodingMethod = recognizer.decodingMethod,
+            maxActivePaths = recognizer.maxActivePaths,
+            hotwordsFile = recognizer.hotwordsFile,
+            hotwordsScore = recognizer.hotwordsScore,
+            ruleFsts = recognizer.ruleFsts,
+            ruleFars = recognizer.ruleFars,
+            blankPenalty = recognizer.blankPenalty,
         )
     }
 
-    fun create(modelDirectory: File): SherpaOnlineRecognizerPort {
+    fun create(
+        modelDirectory: File,
+        profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+    ): SherpaOnlineRecognizerPort {
         require(modelDirectory.isDirectory) { "ASR_MODEL_NOT_READY" }
         return NativeRecognizerPort(
             OnlineRecognizer(
                 assetManager = null,
-                config = buildConfig(modelDirectory),
+                config = buildConfig(modelDirectory, profile),
             ),
         )
     }
+
+    private fun ModelEndpointProfile.toSherpaConfig(): EndpointConfig = EndpointConfig(
+        rule1 = rule1.toSherpaRule(),
+        rule2 = rule2.toSherpaRule(),
+        rule3 = rule3.toSherpaRule(),
+    )
+
+    private fun ModelEndpointRule.toSherpaRule(): EndpointRule = EndpointRule(
+        mustContainNonSilence = mustContainNonSilence,
+        minTrailingSilence = minTrailingSilence,
+        minUtteranceLength = minUtteranceLength,
+    )
 
     private class NativeRecognizerPort(
         private val recognizer: OnlineRecognizer,

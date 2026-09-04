@@ -30,6 +30,15 @@ class EventEngine(
     private val processedFinalIds = mutableSetOf<Int>()
     private var syntheticFinalId = 0
 
+    /** Clear all per-listening-session state before a reused handle starts a new course. */
+    fun resetSession() {
+        lastRollcallTs = 0L
+        lastQuestionTs = 0L
+        processedFinalIds.clear()
+        syntheticFinalId = 0
+        finalWindow.clear()
+    }
+
     /** Compatibility entry point for non-streaming/import callers. */
     fun process(segment: String, ts: Long = System.currentTimeMillis()): ClassEvent? {
         val sens = sensitivityFlow.value

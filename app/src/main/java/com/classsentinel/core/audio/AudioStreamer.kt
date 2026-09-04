@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** read()==0 时的有界退避（协程 delay，可取消，不用 Thread.sleep），避免 CPU spin。 */
 private const val ZERO_READ_RETRY_MS = 20L
@@ -78,6 +79,11 @@ internal class RealAudioRecordResource(
         this.ns = ns
     }
 
+    /** Interrupt a blocking read so the PCM flow can complete its graceful stop. */
+    fun requestStop() {
+        runCatching { rec.stop() }
+    }
+
     override fun close() {
         runCatching { rec.stop() }
         rec.release()
@@ -100,6 +106,22 @@ open class AudioStreamer(
     /** 生产调用方传入应用 Context，用于在创建 AudioRecord 前检查录音权限。 */
     private val context: Context? = null,
 ) {
+
+    private val stopRequested = AtomicBoolean(false)
+
+    @Volatile
+    private var activeResource: RealAudioRecordResource? = null
+
+    /** Prepare a reused streamer for a new capture session. */
+    internal open fun prepareForCapture() {
+        stopRequested.set(false)
+    }
+
+    /** Request PCM completion; the ASR layer can then flush its final utterance. */
+    internal open fun stop() {
+        stopRequested.set(true)
+        activeResource?.requestStop()
+    }
 
     open fun pcm(): Flow<ShortArray> = flow {
         val minBuf = AudioRecord.getMinBufferSize(
@@ -139,9 +161,12 @@ open class AudioStreamer(
                         AudioFormat.ENCODING_PCM_16BIT,
                         minBuf * 2,
                     ),
-                )
+                ).also { activeResource = it }
             },
-            close = { it.close() },
+            close = {
+                if (activeResource === it) activeResource = null
+                it.close()
+            },
         ) { res ->
             val rec = res.audioRecord
             if (rec.state != AudioRecord.STATE_INITIALIZED) {
@@ -177,7 +202,7 @@ open class AudioStreamer(
             val buf = ShortArray(minBuf)
             var readCount = 0
             var sumSq = 0.0
-            while (currentCoroutineContext().isActive) {
+            while (currentCoroutineContext().isActive && !stopRequested.get()) {
                 when (val result = classifyAudioRead(rec.read(buf, 0, buf.size))) {
                     is AudioReadResult.Data -> {
                         val n = result.count

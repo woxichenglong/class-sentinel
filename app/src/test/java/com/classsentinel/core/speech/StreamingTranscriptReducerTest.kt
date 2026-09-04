@@ -62,7 +62,7 @@ class StreamingTranscriptReducerTest {
         val reducer = StreamingTranscriptReducer()
         reducer.reduce(StreamingAsrEvent.Partial(7, "未完成", 200L))
 
-        val snapshot = reducer.reduce(StreamingAsrEvent.Failed("ASR_RUNTIME"))
+        val snapshot = reducer.reduce(StreamingAsrEvent.Failed(StreamingAsrErrorKind.ASR_RUNTIME))
 
         assertEquals(StreamingAsrEvent.Partial(7, "未完成", 200L), snapshot.currentPartial)
         assertTrue(snapshot.finalizedLines.isEmpty())

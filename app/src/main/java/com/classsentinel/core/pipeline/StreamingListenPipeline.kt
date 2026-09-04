@@ -6,7 +6,6 @@ import com.classsentinel.core.speech.StreamingSpeechEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -50,6 +49,7 @@ internal class StreamingListenPipeline(
         collectorJob?.takeIf { it.isActive }?.let { return it }
         synchronized(this) {
             collectorJob?.takeIf { it.isActive }?.let { return it }
+            streamer.prepareForCapture()
             stopRequested = false
             terminalFailure = false
             finalCount = 0
@@ -101,6 +101,7 @@ internal class StreamingListenPipeline(
                             is StreamingAsrEvent.Failed -> {
                                 terminalFailure = true
                                 publishState(PipelineState.Error("转写中断"))
+                                throw TerminalFailure()
                             }
                         }
                     }
@@ -109,6 +110,8 @@ internal class StreamingListenPipeline(
                     if (!stopRequested && !terminalFailure) {
                         publishState(PipelineState.Error("转写中断"))
                     }
+                } catch (_: TerminalFailure) {
+                    // Failed already published the safe terminal Error state.
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -126,7 +129,8 @@ internal class StreamingListenPipeline(
             collectorJob?.takeIf { it.isActive }?.also { stopRequested = true }
         } ?: return
         publishState(PipelineState.Stopping)
-        job.cancelAndJoin()
+        streamer.stop()
+        job.join()
         synchronized(this) {
             if (collectorJob === job) collectorJob = null
         }
@@ -137,4 +141,6 @@ internal class StreamingListenPipeline(
         _state.value = value
         onStateChanged(value)
     }
+
+    private class TerminalFailure : RuntimeException()
 }

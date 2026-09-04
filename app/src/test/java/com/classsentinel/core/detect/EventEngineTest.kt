@@ -105,4 +105,21 @@ class EventEngineTest {
         assertNull(engine().processFinal(FinalTranscript(2, "是不是这样", 1_000L, 2_000L), ts = 2_000))
         assertNull(engine().processFinal(FinalTranscript(3, "大家先看书十分钟", 2_000L, 3_000L), ts = 3_000))
     }
+
+    @Test
+    fun `session reset accepts reused utterance ids without old suppression or context`() {
+        val eng = engine()
+        eng.processFinal(FinalTranscript(1, "张伟", 0L, 1_000L), ts = 1_000)
+
+        eng.resetSession()
+
+        val event = eng.processFinal(
+            FinalTranscript(1, "为什么价格上涨", 0L, 1_000L),
+            ts = 2_000,
+        )
+
+        assertNotNull(event)
+        assertEquals(EventScope.CLASS_OPEN, event?.scope)
+        assertEquals("为什么价格上涨", event?.context)
+    }
 }
