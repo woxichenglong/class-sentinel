@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.pipeline.PipelineState
+import com.classsentinel.core.speech.ModelProfile
+import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveStreamBus
@@ -54,16 +56,11 @@ internal fun homeStateText(state: PipelineState): String = when (state) {
     is PipelineState.Error -> "监听出错：${state.message}"
 }
 
-internal fun localAsrModelReady(filesDir: File): Boolean {
-    val modelDir = File(filesDir, "asr/${SherpaModelInstaller.DEFAULT_MODEL_PATH}")
-    return listOf(
-        "encoder-epoch-99-avg-1.int8.onnx",
-        "decoder-epoch-99-avg-1.onnx",
-        "joiner-epoch-99-avg-1.int8.onnx",
-        "tokens.txt",
-    ).all { name ->
-        File(modelDir, name).isFile && File(modelDir, name).length() > 0L
-    }
+internal fun localAsrModelReady(
+    filesDir: File,
+    profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+): Boolean {
+    return SherpaModelInstaller.isInstalled(filesDir, profile)
 }
 
 /** Student home: one-tap listening, identity, and local model readiness. */
@@ -73,9 +70,14 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val pipelineState by LiveStreamBus.pipelineState.collectAsState()
     val activeCourseId by LiveStreamBus.activeCourseId.collectAsState()
     val names by AppConfig.names.collectAsState()
-    var modelReady by remember { mutableStateOf(localAsrModelReady(context.filesDir)) }
-    LaunchedEffect(pipelineState) {
-        modelReady = localAsrModelReady(context.filesDir)
+    val settings = remember { com.classsentinel.data.SettingsRepositoryHolder.get(context) }
+    val localAsrModelId by settings.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
+    val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
+    var modelReady by remember(localAsrProfile.id) {
+        mutableStateOf(localAsrModelReady(context.filesDir, localAsrProfile))
+    }
+    LaunchedEffect(pipelineState, localAsrProfile.id) {
+        modelReady = localAsrModelReady(context.filesDir, localAsrProfile)
     }
 
     val listening = pipelineState.isSessionActive() || activeCourseId != null
@@ -138,8 +140,9 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("本地转写模型", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(if (modelReady) "已就绪" else "待首次启动安装")
+                    Text(if (modelReady) "已就绪" else "未准备")
                 }
+                Text(localAsrProfile.displayName, style = MaterialTheme.typography.bodySmall)
             }
         }
 

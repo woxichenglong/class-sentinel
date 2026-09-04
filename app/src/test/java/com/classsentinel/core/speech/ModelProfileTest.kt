@@ -222,4 +222,19 @@ class ModelProfileTest {
         assertTrue(profile.capabilities.streaming)
         assertTrue(profile.capabilities.codeSwitch)
     }
+
+    @Test
+    fun `daily model catalog exposes baseline small and both x asr choices`() {
+        assertEquals(
+            listOf(
+                "sherpa-zh-14m",
+                "sherpa-small-bilingual-zh-en",
+                "x-asr-480",
+                "x-asr-960",
+            ),
+            ModelProfiles.DAILY_SELECTABLE.map { it.id },
+        )
+        assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, ModelProfiles.resolveDaily("unknown").id)
+        assertEquals("X-ASR 中英 960ms（性能优先）", ModelProfiles.X_ASR_960.displayName)
+    }
 }

@@ -23,4 +23,13 @@ class ListenServiceLiveWiringTest {
 
         assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, engine.modelProfileId)
     }
+
+    @Test
+    fun `live speech factory binds an explicitly selected daily profile`() {
+        listOf(ModelProfiles.X_ASR_480, ModelProfiles.X_ASR_960).forEach { profile ->
+            val engine = createLiveStreamingSpeechEngine(File("build/${profile.id}"), profile)
+
+            assertEquals(profile.id, engine.modelProfileId)
+        }
+    }
 }

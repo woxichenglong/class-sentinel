@@ -9,6 +9,7 @@ import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
+import com.classsentinel.core.speech.ModelProfiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -142,6 +143,17 @@ class SettingsRepositoryTest {
         assertEquals("90", repo2.retentionDaysFlow.first())
         assertEquals("on", repo2.darkModeFlow.first())
         assertEquals("sk-asr-silicon", AppConfig.siliconApiKey)
+    }
+
+    @Test
+    fun `本地模型选择可持久化并在新实例回读`() = runBlocking {
+        val r = repo()
+
+        assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, r.localAsrModelIdFlow.first())
+        r.saveLocalAsrModel(ModelProfiles.X_ASR_960.id)
+
+        assertEquals(ModelProfiles.X_ASR_960.id, r.localAsrModelIdFlow.first())
+        assertEquals(ModelProfiles.X_ASR_960.id, repo().localAsrModelIdFlow.first())
     }
 
     @Test

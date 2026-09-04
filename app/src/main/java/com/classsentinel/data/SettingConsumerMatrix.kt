@@ -23,6 +23,7 @@ object SettingConsumerMatrix {
         "answerStyle",
         "streamOutput",
         "darkMode",
+        "localAsrModel",
     )
 
     val consumers: Map<String, String> = linkedMapOf(
@@ -41,5 +42,6 @@ object SettingConsumerMatrix {
         "answerStyle" to "AnswerService → ListenService",
         "streamOutput" to "AnswerService → ListenService",
         "darkMode" to "MainActivity → ClassSentinelTheme",
+        "localAsrModel" to "SettingsRepository → ListenServiceHandleFactory/SherpaOnnxStreamingEngine",
     )
 }

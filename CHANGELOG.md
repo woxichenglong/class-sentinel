@@ -12,19 +12,20 @@
 - `StreamingListenPipeline` 收到失败事件后进入终态 `Error`，迟到 ASR 事件不能把状态覆盖回 `Listening`。
 - 旧 `SpeechEngine`、`VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和 fallback 暂留在 WAV 导入/pending recovery 边界，不作为实时链路 fallback；删除前必须先证明无生产引用。
 - 新增 `docs/asr-refactor-checklist.md`，记录保留、隔离、删除候选、接口守护规则和下一切片准入条件。
+- 日常本地 ASR 新增 profile 选择：设置页可选 14M baseline、small bilingual、X-ASR 480/960；选择写入独立的 `local_asr_model_id`，每次新监听按同一 profile 安装/复用模型，默认仍为 14M，切换不热切换当前会话。
 
 ### 验证
 
 - P1/P2 focused regression：51 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：86 个测试类、446 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：86 个测试类、450 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
-- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍锁定 14M baseline；small bilingual 作为显式实验 profile，X-ASR 480/960 作为 debug importer/replay profile，X-ASR 大文件未内置进 APK。
-- 本轮 Debug APK：223,624,523 bytes；SHA-256 为 `2d86d21499b18ec053bce7e02644b15edaae3bc5743f4007240764031591310a`。
+- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；small bilingual 与 X-ASR 480/960 均进入日常可选列表，X-ASR 大文件仍未内置进 APK，需先用 debug importer 准备。
+- 本轮 Debug APK：223,640,907 bytes；SHA-256 为 `699c01b7f2c2313244b874d62874659b7e53f163c33c8d829e0d42cd9d3ff92c`。
 
 ### 模型实验门
 
-- 加入官方 small bilingual Zipformer 的四文件 INT8/decoder-fp32 artifact、`SMALL_BILINGUAL_ZH_EN` profile 和 debug-only 外部模型 importer；默认 live 仍使用 14M baseline。
-- 加入 X-ASR-zh-en immutable Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 `X_ASR_480`/`X_ASR_960` profile；两个 profile 均先通过官方 deployment CPU smoke，X-ASR 大文件未进入 APK。
+- 加入官方 small bilingual Zipformer 的四文件 INT8/decoder-fp32 artifact、`SMALL_BILINGUAL_ZH_EN` profile 和 debug-only 外部模型 importer；默认 live 仍使用 14M baseline，small 可在设置页选择。
+- 加入 X-ASR-zh-en immutable Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 `X_ASR_480`/`X_ASR_960` profile；两个 profile 均先通过官方 deployment CPU smoke，现已进入日常模型选择列表，但 X-ASR 大文件未进入 APK。
 - A/B/C/D 初始 FAST 只使用同一官方 `test_wavs/0.wav`（1 个公开样本），通过 Kotlin `UnifiedAsrScorer` 生成 41 列 CSV；该结果是流程/初筛证据，不替代金融课堂 corpus，也不构成 K80 winner 决定。
 - 本次新 APK 尚未在 K80 重装；旧 APK 的 K80 安装/cold-start 记录不适用于本次模型资产变更。
 

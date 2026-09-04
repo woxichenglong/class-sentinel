@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiProviderPreset
+import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.data.AiSettings
 import com.classsentinel.data.AnswerHistoryRepository
 import com.classsentinel.data.AppDatabase
@@ -86,6 +87,8 @@ fun SettingsScreen() {
     val answerStyle by repo.answerStyleFlow.collectAsState(initial = "terseness")
     val streamOutput by repo.streamOutputFlow.collectAsState(initial = true)
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
+    val localAsrModelId by repo.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
+    val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
 
     var draftName by rememberSaveable { mutableStateOf("") }
     var draftVariants by rememberSaveable { mutableStateOf("") }
@@ -306,10 +309,26 @@ fun SettingsScreen() {
 
         item {
             SectionCard("本地转写") {
-                Text("sherpa-onnx Zipformer 中文 14M", style = MaterialTheme.typography.bodyLarge)
+                Text("选择日常监听模型", style = MaterialTheme.typography.titleSmall)
+                DropdownRow(
+                    options = ModelProfiles.DAILY_SELECTABLE.map { it.id to it.displayName },
+                    selected = localAsrProfile.id,
+                    onSelect = { saveSnap { repo.saveLocalAsrModel(it) } },
+                )
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    if (localAsrModelReady(context.filesDir)) "模型已就绪，实时转写不会上传音频"
-                    else "模型将在首次开始监听时安装到应用私有目录",
+                    if (localAsrModelReady(context.filesDir, localAsrProfile)) {
+                        "模型已就绪，实时转写不会上传音频"
+                    } else if (localAsrProfile == ModelProfiles.X_ASR_480 || localAsrProfile == ModelProfiles.X_ASR_960) {
+                        "该 X-ASR 模型尚未导入；切换后需先准备模型文件"
+                    } else {
+                        "模型将在首次开始监听时安装到应用私有目录"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "切换只影响下一次开始监听；当前会话不会热切换模型。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

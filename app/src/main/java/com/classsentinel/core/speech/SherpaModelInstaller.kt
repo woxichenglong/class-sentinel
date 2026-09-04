@@ -115,6 +115,21 @@ internal class SherpaModelInstaller(
     }
 
     companion object {
+        /** UI/readiness seam: only a marker-backed, exact hash/size installation is ready. */
+        internal fun isInstalled(filesDir: File, profile: ModelProfile): Boolean = runCatching {
+            val asrRoot = File(filesDir, "asr").canonicalFile
+            val targetDir = File(asrRoot, profile.artifact.directory).canonicalFile
+            val rootPrefix = asrRoot.path + File.separator
+            if (!targetDir.path.startsWith(rootPrefix)) return@runCatching false
+
+            val marker = File(targetDir, MODEL_MARKER_FILE)
+            marker.isFile && marker.readText() == "${profile.id}\n${profile.version}\n" &&
+                profile.artifact.files.all { spec ->
+                    val file = File(targetDir, spec.name)
+                    file.isFile && file.length() == spec.expectedSize && sha256(file) == spec.sha256
+                }
+        }.getOrDefault(false)
+
         /** Compatibility alias for UI callers; the profile remains the single source of truth. */
         val DEFAULT_MODEL_PATH: String
             get() = ModelProfiles.ZIPFORMER_ZH_14M.artifact.directory
@@ -122,5 +137,18 @@ internal class SherpaModelInstaller(
         private const val COPY_BUFFER_SIZE = 64 * 1024
         private const val HASH_BUFFER_SIZE = 64 * 1024
         private const val MODEL_MARKER_FILE = ".model-profile"
+
+        private fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(HASH_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count > 0) digest.update(buffer, 0, count)
+                }
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
     }
 }

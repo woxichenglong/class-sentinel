@@ -108,6 +108,7 @@ internal data class ModelProfile(
     val recognizer: ModelRecognizerProfile,
     val capabilities: ModelCapabilities,
     val evaluationLabel: String,
+    val displayName: String = evaluationLabel,
 ) {
     init {
         require(id.matches(ID_PATTERN)) { "MODEL_PROFILE_ID_INVALID" }
@@ -180,6 +181,7 @@ internal object ModelProfiles {
             codeSwitch = false,
         ),
         evaluationLabel = "baseline-zh-14m",
+        displayName = "Zipformer 中文 14M（稳定默认）",
     )
 
     val SMALL_BILINGUAL_ZH_EN = ModelProfile(
@@ -247,6 +249,7 @@ internal object ModelProfiles {
             codeSwitch = true,
         ),
         evaluationLabel = "small-bilingual-zh-en",
+        displayName = "Zipformer 中英 Small（轻量）",
     )
 
     val X_ASR_480 = ModelProfile(
@@ -313,6 +316,7 @@ internal object ModelProfiles {
             codeSwitch = true,
         ),
         evaluationLabel = "x-asr-zh-en-480ms",
+        displayName = "X-ASR 中英 480ms（质量优先）",
     )
 
     val X_ASR_960 = ModelProfile(
@@ -379,5 +383,18 @@ internal object ModelProfiles {
             codeSwitch = true,
         ),
         evaluationLabel = "x-asr-zh-en-960ms",
+        displayName = "X-ASR 中英 960ms（性能优先）",
     )
+
+    /** Profiles that may be selected for ordinary local listening. */
+    val DAILY_SELECTABLE: List<ModelProfile> = listOf(
+        ZIPFORMER_ZH_14M,
+        SMALL_BILINGUAL_ZH_EN,
+        X_ASR_480,
+        X_ASR_960,
+    )
+
+    /** Unknown persisted values fail closed to the stable baseline. */
+    fun resolveDaily(id: String?): ModelProfile =
+        DAILY_SELECTABLE.firstOrNull { it.id == id } ?: ZIPFORMER_ZH_14M
 }

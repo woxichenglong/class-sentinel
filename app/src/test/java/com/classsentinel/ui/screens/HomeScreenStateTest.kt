@@ -1,7 +1,11 @@
 package com.classsentinel.ui.screens
 
 import com.classsentinel.core.pipeline.PipelineState
+import com.classsentinel.core.speech.ModelFileSpec
+import com.classsentinel.core.speech.ModelProfile
+import com.classsentinel.core.speech.ModelProfiles
 import java.io.File
+import java.security.MessageDigest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,24 +27,64 @@ class HomeScreenStateTest {
     }
 
     @Test
-    fun `local model status is false until all four files are nonempty`() {
+    fun `local model status requires the validated profile marker and all files`() {
         val root = temporaryFolder.newFolder("files")
+        val profile = testProfile("home-model")
+        val modelDir = File(root, "asr/${profile.artifact.directory}").apply { mkdirs() }
 
-        assertFalse(localAsrModelReady(root))
-        val modelDir = File(root, "asr/zipformer-zh-14M-2023-02-23").apply { mkdirs() }
-        MODEL_FILES.dropLast(1).forEach { File(modelDir, it).writeText("model") }
-        assertFalse(localAsrModelReady(root))
-        File(modelDir, MODEL_FILES.last()).writeText("tokens")
+        assertFalse(localAsrModelReady(root, profile))
+        profile.artifact.files.dropLast(1).forEach { spec ->
+            File(modelDir, spec.name).writeBytes(MODEL_BYTES.getValue(spec.name))
+        }
+        assertFalse(localAsrModelReady(root, profile))
+        profile.artifact.files.forEach { spec -> File(modelDir, spec.name).writeBytes(MODEL_BYTES.getValue(spec.name)) }
+        assertFalse(localAsrModelReady(root, profile))
+        File(modelDir, ".model-profile").writeText("${profile.id}\n${profile.version}\n")
 
-        assertTrue(localAsrModelReady(root))
+        assertTrue(localAsrModelReady(root, profile))
     }
 
+    @Test
+    fun `local model status follows the selected profile artifact layout`() {
+        val root = temporaryFolder.newFolder("x-asr-files")
+        val profile = testProfile("selected-model")
+        val modelDir = File(root, "asr/${profile.artifact.directory}").apply { mkdirs() }
+
+        assertFalse(localAsrModelReady(root, profile))
+        profile.artifact.files.forEach { spec -> File(modelDir, spec.name).writeBytes(MODEL_BYTES.getValue(spec.name)) }
+        assertFalse(localAsrModelReady(root, profile))
+        File(modelDir, ".model-profile").writeText("${profile.id}\n${profile.version}\n")
+
+        assertTrue(localAsrModelReady(root, profile))
+    }
+
+    private fun testProfile(directory: String): ModelProfile {
+        val base = ModelProfiles.SMALL_BILINGUAL_ZH_EN
+        return base.copy(
+            artifact = base.artifact.copy(
+                directory = directory,
+                encoder = spec("encoder.onnx"),
+                decoder = spec("decoder.onnx"),
+                joiner = spec("joiner.onnx"),
+                tokens = spec("tokens.txt"),
+            ),
+        )
+    }
+
+    private fun spec(name: String): ModelFileSpec {
+        val bytes = MODEL_BYTES.getValue(name)
+        return ModelFileSpec(name, bytes.size.toLong(), sha256(bytes))
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
     private companion object {
-        val MODEL_FILES = listOf(
-            "encoder-epoch-99-avg-1.int8.onnx",
-            "decoder-epoch-99-avg-1.onnx",
-            "joiner-epoch-99-avg-1.int8.onnx",
-            "tokens.txt",
+        val MODEL_BYTES = mapOf(
+            "encoder.onnx" to byteArrayOf(1, 2, 3),
+            "decoder.onnx" to byteArrayOf(4, 5),
+            "joiner.onnx" to byteArrayOf(6, 7, 8, 9),
+            "tokens.txt" to "tokens".toByteArray(),
         )
     }
 }

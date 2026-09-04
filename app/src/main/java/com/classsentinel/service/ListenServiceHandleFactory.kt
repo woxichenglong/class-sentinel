@@ -63,10 +63,12 @@ internal class ListenServiceHandleFactory(
         } catch (e: Exception) {
             throw IllegalStateException("配置加载失败")
         }
+        val selectedProfile = ModelProfiles.resolveDaily(settings.localAsrModelIdFlow.first())
 
         val modelDirectory = withContext(Dispatchers.IO) {
             SherpaModelInstaller(
                 filesDir = context.applicationContext.filesDir,
+                profile = selectedProfile,
                 assetOpener = context.applicationContext.assets::open,
             ).install()
         }
@@ -77,7 +79,7 @@ internal class ListenServiceHandleFactory(
             repository.abortStale(System.currentTimeMillis() - STALE_RUNNING_COURSE_TIMEOUT_MS)
         }
         val store = CourseSessionStoreAdapter(repository)
-        val speech = createLiveStreamingSpeechEngine(modelDirectory)
+        val speech = createLiveStreamingSpeechEngine(modelDirectory, selectedProfile)
         val pipeline = StreamingListenPipeline(
             streamer = AudioStreamer(context = context),
             speech = speech,
