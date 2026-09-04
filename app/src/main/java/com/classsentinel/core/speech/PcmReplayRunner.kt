@@ -94,10 +94,14 @@ internal class PcmReplayRunner(
         val observations = mutableListOf<ReplayObservation>()
         val pacedPcm = flow {
             var samplesBeforePacket = 0L
+            var audioClockStartNanos: Long? = null
             pcm.collect { chunk ->
                 if (config.mode == ReplayMode.REALTIME) {
+                    val audioStart = audioClockStartNanos ?: nowNanos().also {
+                        audioClockStartNanos = it
+                    }
                     awaitPacketTarget(
-                        replayStartNanos = startedAtNanos,
+                        audioClockStartNanos = audioStart,
                         samplesBeforePacket = samplesBeforePacket,
                         sampleRate = profile.recognizer.sampleRate,
                     )
@@ -158,11 +162,11 @@ internal class PcmReplayRunner(
     )
 
     private suspend fun awaitPacketTarget(
-        replayStartNanos: Long,
+        audioClockStartNanos: Long,
         samplesBeforePacket: Long,
         sampleRate: Int,
     ) {
-        val targetNanos = replayStartNanos +
+        val targetNanos = audioClockStartNanos +
             (samplesBeforePacket / sampleRate.toLong()) * 1_000_000_000L +
             (samplesBeforePacket % sampleRate.toLong()) * 1_000_000_000L / sampleRate.toLong()
         val waitNanos = targetNanos - nowNanos()

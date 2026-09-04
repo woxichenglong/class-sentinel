@@ -228,6 +228,52 @@ class PcmReplayRunnerTest {
     }
 
     @Test
+    fun `realtime audio clock starts after recognizer initialization`() = runTest {
+        val clock = FakeClock()
+        val arrivalsMs = mutableListOf<Long>()
+        val waits = mutableListOf<Long>()
+        val engine = object : ProfileBoundStreamingSpeechEngine {
+            override val name = "slow-init-fake"
+            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
+            override val sampleRate = 1_000
+
+            override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
+                clock.advanceMs(350L)
+                pcm.collect {
+                    arrivalsMs += clock.nowNanos / 1_000_000L
+                }
+                emit(StreamingAsrEvent.Final(1, "初始化后回放", 0L, 300L))
+            }
+        }
+        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
+            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 1_000),
+        )
+        val runner = PcmReplayRunner(
+            nowNanos = { clock.nowNanos },
+            delayBetweenPackets = {
+                waits += it
+                clock.advanceMs(it)
+            },
+        )
+
+        runner.run(
+            preparedModel = PreparedModel.from(profile, engine),
+            gitCommitSha = "abc1234",
+            runId = "run-slow-init-realtime",
+            phase = ReplayPhase.COLD,
+            pcm = flowOf(
+                ShortArray(100),
+                ShortArray(100),
+                ShortArray(100),
+            ),
+            config = ReplayInputConfig(inputPacketMs = 100, mode = ReplayMode.REALTIME),
+        )
+
+        assertEquals(listOf(350L, 450L, 550L), arrivalsMs)
+        assertEquals(listOf(100L, 100L), waits)
+    }
+
+    @Test
     fun `runner separates recognizer init decode and total elapsed timings`() = runTest {
         val clock = FakeClock()
         val engine = object : ProfileBoundStreamingSpeechEngine, ReplayTimingSource {
