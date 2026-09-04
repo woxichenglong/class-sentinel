@@ -15,11 +15,11 @@
 
 ### 验证
 
-- P1 focused regression：50 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：85 个测试类、436 个用例，失败 0、错误 0、跳过 0。
+- P1/P2 focused regression：51 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：85 个测试类、437 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
-- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 39 列 CSV 输出；当前只锁定 14M baseline，未内置 X-ASR 资产。
-- 本轮 Debug APK：170,883,379 bytes；SHA-256 为 `427abad9efbf6c65412bd1096f9079ac0342d871c17be7784b059d36a7448619`。
+- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`，当前只锁定 14M baseline，未内置 X-ASR 资产。
+- 本轮 Debug APK：170,883,379 bytes；SHA-256 为 `104e813e0fac178fa25c692d2af7e316a2932c5019aa4821cd3f19fb41aea266`。
 
 ## [Unreleased] — v0.3.0 可靠性、学习产物与音频工作流（2026-09-03）
 

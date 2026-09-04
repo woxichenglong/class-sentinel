@@ -91,14 +91,14 @@ class SherpaOnnxStreamingEngineTest {
         val engine = SherpaOnnxStreamingEngine(
             recognizerFactory = {
                 clock.advanceMs(7L)
-                FakeRecognizer(stream)
+                FakeRecognizer(stream) { clock.advanceMs(5L) }
             },
             nowNanos = { clock.nowNanos },
         )
 
         engine.transcribe(flowOf(shortArrayOf(100))).toList()
 
-        assertEquals(7L, engine.lastReplayTimings?.recognizerInitMs)
+        assertEquals(12L, engine.lastReplayTimings?.recognizerInitMs)
         assertEquals(13L, engine.lastReplayTimings?.decodeElapsedMs)
     }
 
@@ -129,10 +129,11 @@ class SherpaOnnxStreamingEngineTest {
 
     private class FakeRecognizer(
         private val fakeStream: SherpaOnlineStreamPort,
+        private val onCreateStream: () -> Unit = {},
     ) : SherpaOnlineRecognizerPort {
         var releaseCalls = 0
 
-        override fun createStream(): SherpaOnlineStreamPort = fakeStream
+        override fun createStream(): SherpaOnlineStreamPort = fakeStream.also { onCreateStream() }
 
         override fun release() {
             releaseCalls++

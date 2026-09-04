@@ -29,7 +29,7 @@ data class KeywordMetrics(
     val recall: Double?
         get() = referenceHits.takeIf { it > 0 }?.let { matchedHits.toDouble() / it }
 
-    val falsePositiveRate: Double
+    val falseDiscoveryRate: Double
         get() = if (hypothesisHits == 0) 0.0 else falsePositiveHits.toDouble() / hypothesisHits
 }
 
@@ -37,6 +37,8 @@ data class KeywordMetrics(
 data class UnifiedAsrScore(
     val modelProfileId: String,
     val artifactSetHash: String,
+    val scorerVersion: Int,
+    val normalizationProfile: String,
     val gitCommitSha: String,
     val runId: String,
     val phase: ReplayPhase,
@@ -59,6 +61,9 @@ data class UnifiedAsrScore(
 
 /** Scores replay output without involving the live app pipeline or legacy importer. */
 object UnifiedAsrScorer {
+    private const val SCORER_VERSION = 1
+    private const val NORMALIZATION_PROFILE = "mixed-zh-en-v1"
+
     fun score(
         result: PcmReplayResult,
         referenceText: String,
@@ -74,6 +79,8 @@ object UnifiedAsrScorer {
         return UnifiedAsrScore(
             modelProfileId = result.modelProfileId,
             artifactSetHash = result.artifactSetHash,
+            scorerVersion = SCORER_VERSION,
+            normalizationProfile = NORMALIZATION_PROFILE,
             gitCommitSha = result.gitCommitSha,
             runId = result.runId,
             phase = result.phase,
@@ -172,7 +179,7 @@ object UnifiedAsrScorer {
         for (char in text) {
             val current = when {
                 char.isCjk() -> "ZH"
-                char.isAsciiLetterOrDigit() -> "EN"
+                char.isAsciiLetter() -> "EN"
                 else -> null
             } ?: continue
             if (current != previous) runs += current
@@ -206,6 +213,6 @@ object UnifiedAsrScorer {
 
     private fun Char.isCjk(): Boolean = this in '\u4E00'..'\u9FFF'
 
-    private fun Char.isAsciiLetterOrDigit(): Boolean =
-        this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
+    private fun Char.isAsciiLetter(): Boolean =
+        this in 'a'..'z' || this in 'A'..'Z'
 }

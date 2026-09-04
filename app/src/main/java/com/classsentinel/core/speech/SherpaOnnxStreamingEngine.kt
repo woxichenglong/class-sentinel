@@ -44,11 +44,9 @@ internal class SherpaOnnxStreamingEngine(
         try {
             val recognizerInitStartedAtNanos = nowNanos()
             recognizer = recognizerFactory()
+            stream = recognizer.createStream()
             recognizerInitMs = elapsedMs(recognizerInitStartedAtNanos)
             decodeStarted = true
-            val streamCreationStartedAtNanos = nowNanos()
-            stream = recognizer.createStream()
-            decodeElapsedNanos += elapsedNanos(streamCreationStartedAtNanos)
             val activeStream = stream
 
             pcm.collect { chunk ->

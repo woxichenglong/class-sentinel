@@ -41,6 +41,8 @@ class UnifiedAsrScorerTest {
         assertEquals("run-001", score.runId)
         assertEquals(ReplayPhase.WARM, score.phase)
         assertEquals(ReplayMode.FAST, score.replayMode)
+        assertEquals(1, score.scorerVersion)
+        assertEquals("mixed-zh-en-v1", score.normalizationProfile)
         assertEquals(0.0, score.cer, 0.0)
         assertEquals(0.0, score.wer, 0.0)
         assertEquals(0.0, score.codeSwitchErrorRate, 0.0)
@@ -74,12 +76,12 @@ class UnifiedAsrScorerTest {
         assertEquals(1, score.professionalTerms.matchedHits)
         assertEquals(2, score.professionalTerms.hypothesisHits)
         assertEquals(0.5, score.professionalTerms.recall!!, 0.0)
-        assertEquals(0.5, score.professionalTerms.falsePositiveRate, 0.0)
+        assertEquals(0.5, score.professionalTerms.falseDiscoveryRate, 0.0)
         assertEquals(1, score.names.referenceHits)
         assertEquals(1, score.names.hypothesisHits)
         assertEquals(0, score.names.matchedHits)
         assertEquals(0.0, score.names.recall!!, 0.0)
-        assertEquals(1.0, score.names.falsePositiveRate, 0.0)
+        assertEquals(1.0, score.names.falseDiscoveryRate, 0.0)
     }
 
     @Test
@@ -95,7 +97,21 @@ class UnifiedAsrScorerTest {
 
         assertEquals(0.5, score.codeSwitchErrorRate, 0.0)
         assertNull(score.names.recall)
-        assertEquals(0.0, score.names.falsePositiveRate, 0.0)
+        assertEquals(0.0, score.names.falseDiscoveryRate, 0.0)
+    }
+
+    @Test
+    fun `digits do not create a script switch`() {
+        val score = UnifiedAsrScorer.score(
+            result = replayResult(
+                events = listOf(
+                    ReplayObservation(StreamingAsrEvent.Final(1, "第章", 0L, 1_000L), 100L),
+                ),
+            ),
+            referenceText = "第3章",
+        )
+
+        assertEquals(0.0, score.codeSwitchErrorRate, 0.0)
     }
 
     @Test
