@@ -41,7 +41,8 @@ class NameMatcher private constructor(
     )
 
     private val contextWords =
-        listOf("来", "回答", "在不在", "在吗", "起立", "上来", "说说", "讲一下", "发言")
+        listOf("来", "回答", "在不在", "在吗", "起立", "起来", "上来", "说说", "讲一下", "发言")
+    private val contextFillers = listOf("再", "先", "马上", "现在", "请")
 
 
     fun detect(segment: String, sensitivity: Sensitivity): Hit? {
@@ -62,7 +63,7 @@ class NameMatcher private constructor(
                     }
                     exactStart = segment.indexOf(v, exactStart + 1)
                 }
-                // 滑窗模糊：按变体长度滑窗算拼音相似度
+                // 滑窗模糊：按变体长度滑窗算拼音相似度，并以当前窗口做局部 context gate。
                 val window = v.length.coerceAtLeast(2)
                 if (segment.length >= window) {
                     for (start in 0..segment.length - window) {
@@ -70,23 +71,56 @@ class NameMatcher private constructor(
                         val sub = segment.substring(start, start + window)
                         val s = PinyinFuzzy.similarity(sub, v)
                         if (s >= sensitivity.nameScoreMin && (best == null || s > best.score)) {
-                            best = Hit(entry.display, sub, s)
+                            val candidate = Hit(entry.display, sub, s)
+                            if (contextGate(segment, candidate, sensitivity, start) != null) {
+                                best = candidate
+                            }
                         }
                     }
                 }
             }
         }
-        return best?.let { contextGate(segment, it, sensitivity) }
+        return best
     }
 
     /** Current configured entries for the independent question-targeting seam. */
     internal fun configuredNames(): List<NameEntry> = namesProvider()
 
-    private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity, matchStart: Int = segment.indexOf(hit.matched)): Hit? {
-        if (sensitivity.contextRequired && contextWords.none { segment.contains(it) }) return null
+    private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity, matchStart: Int): Hit? {
+        if (sensitivity.contextRequired && !hasLocalContext(segment, hit.matched, matchStart)) return null
         // 单字符命中必须处于点名边界，否则「王国来回答/明天来回答」里的 王/明 会被误判为点名
         if (hit.matched.length == 1 && !isCallBoundary(segment, hit.matched, matchStart)) return null
         return hit
+    }
+
+    /** 只从当前姓名后面的短结构取 context，不借用同句其他姓名的指令词。 */
+    private fun hasLocalContext(segment: String, matched: String, matchStart: Int): Boolean {
+        var suffix = segment.substring(matchStart + matched.length)
+            .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
+        if (suffix.startsWith("同学")) {
+            suffix = suffix.removePrefix("同学")
+                .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
+        }
+        if (startsWithLocalContext(suffix)) return true
+
+        val secondPerson = when {
+            suffix.startsWith("你") -> "你"
+            suffix.startsWith("您") -> "您"
+            else -> return false
+        }
+        suffix = suffix.removePrefix(secondPerson)
+            .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
+        return startsWithLocalContext(suffix)
+    }
+
+    private fun startsWithLocalContext(text: String): Boolean {
+        var suffix = text
+        while (true) {
+            if (contextWords.any { suffix.startsWith(it) }) return true
+            val filler = contextFillers.firstOrNull { suffix.startsWith(it) } ?: return false
+            suffix = suffix.removePrefix(filler)
+                .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
+        }
     }
 
     /** 单字符命中是否处于点名边界：前置不是连续字（未被更长词嵌入），且后缀为空/空白/标点/指令词。 */

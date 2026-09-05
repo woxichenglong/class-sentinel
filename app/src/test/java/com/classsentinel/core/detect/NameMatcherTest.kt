@@ -52,6 +52,29 @@ class NameMatcherTest {
     }
 
     @Test
+    fun `context from another students clause does not trigger this name`() {
+        assertNull(
+            NameMatcher(names).detect("李华来回答，张伟刚才的答案不错", Sensitivity.STANDARD),
+        )
+        assertNull(
+            NameMatcher(names).detect("王强起立，张伟先坐着", Sensitivity.STANDARD),
+        )
+    }
+
+    @Test
+    fun `context immediately after the name still triggers rollcall`() {
+        assertNotNull(NameMatcher(names).detect("老师请张伟来回答", Sensitivity.STANDARD))
+        assertNotNull(NameMatcher(names).detect("张伟，你来回答", Sensitivity.STANDARD))
+    }
+
+    @Test
+    fun `unrelated second-person continuation does not count as rollcall context`() {
+        assertNull(
+            NameMatcher(names).detect("小李说说看，张伟你准备一下", Sensitivity.STANDARD),
+        )
+    }
+
+    @Test
     fun `name without context rejected when required`() {
         assertNull(NameMatcher(names).detect("张伟同学上次作业不错", Sensitivity.STANDARD))
     }

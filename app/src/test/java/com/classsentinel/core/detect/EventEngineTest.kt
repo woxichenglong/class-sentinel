@@ -257,6 +257,17 @@ class EventEngineTest {
     }
 
     @Test
+    fun `partial name does not borrow context from another students clause`() {
+        assertNull(
+            engine().processPartialRollcall(
+                utteranceId = 7,
+                text = "李华来回答，张伟刚才的答案不错",
+                ts = 1_000L,
+            ),
+        )
+    }
+
+    @Test
     fun `sensitivity hot update takes effect`() {
         val flow = MutableStateFlow<Sensitivity>(Sensitivity.STRICT)
         val eng = EventEngine(NameMatcher(listOf(NameEntry("张伟", emptyList()))), flow)

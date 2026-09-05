@@ -24,14 +24,15 @@
 - 收紧 DIRECT 姓名证据：新增独立 `QuestionTargetMatcher`，只接受 display/明确 aliases，不接受 ASR-only 同音字或拼音；要求姓名边界及呼语/定向续接词，避免嵌入长姓名和普通姓名提及误升级。
 - 名字配置分层：`NameEntry` 区分 `display`、`aliases`、`asrVariants`；旧 JSON 的 `variants` 保守兼容为 `asrVariants`，设置页与首次引导可分别录入两类数据。
 - 修正中文定向边界与缺席污染：`请/让/叫/有请/邀请` 可紧接自然叙述前缀；`没来/请假/没到/不在` 改为按姓名 occurrence 局部判断，其他同句人物的缺席不会屏蔽明确 target；补齐带前缀的裸“回答”和标准级“说说” answerable cue，同时保留 `张伟，你来回答` 的 ROLLCALL 语义。
+- 收紧 ROLLCALL 上下文 locality：`NameMatcher` 的“来/回答/起立/说说”等 context 只从当前姓名 occurrence 后的局部结构取得，支持“你再/你先”等自然填充；跨人指令词不会再触发普通或 Partial 点名，非点名的“你准备一下/先坐着”也不会命中。
 
 ### 验证
 
-- Detector/name/question focused regression：3 个测试套件、60 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：90 个测试类、498 个用例，失败 0、错误 0、跳过 0。
+- Detector/name focused regression：2 个测试套件、51 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：90 个测试类、502 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
 - 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；日常选择只开放 14M/small，X-ASR 留在 evaluation/debug catalog；X-ASR live endpoint-on 与官方 endpoint-off 由独立 config mode 区分。
-- 本轮 Debug APK：223,657,379 bytes；SHA-256 为 `60b0e94dca66cb7028e0a96487c1d13f565ea4cd0a652f96718f22d0c0d5ddd7`。
+- 本轮 Debug APK：223,657,379 bytes；SHA-256 为 `8601c32c8b138af369f2493ecf3edfa8b6fbc039c0b6bd022c26d2cfae1f00d7`。
 
 ### 模型实验门
 
