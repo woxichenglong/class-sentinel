@@ -185,10 +185,13 @@ private class SessionPipelineAdapter(
     @Volatile
     private var writeJob: Job? = null
 
+    private val earlyRollcallAlertGate = EarlyRollcallAlertGate()
+
     override suspend fun start() {
         if (collector?.isActive == true) return
         val courseId = store.currentCourseId() ?: return
         eventEngine.resetSession()
+        earlyRollcallAlertGate.clear()
         // 新课程/新会话开始时清空滚动上下文缓冲，避免跨课程残留。
         contextBuffer.clear()
         // 先注册唯一源收集器（UNDISPATCHED 立即订阅），再启动管线，避免漏句。
@@ -201,16 +204,25 @@ private class SessionPipelineAdapter(
                             text = event.text,
                             offsetMs = event.audioOffsetMs,
                         )
+                        val provisional = eventEngine.processPartialRollcall(
+                            utteranceId = event.utteranceId,
+                            text = event.text,
+                        )
+                        if (provisional != null && earlyRollcallAlertGate.record(event.utteranceId)) {
+                            // Provisional alert only: no LiveStreamBus event, Room row, or LLM.
+                            alert.fire(provisional, context)
+                        }
                     }
 
                     is StreamingAsrEvent.Final -> {
+                        val earlyAlerted = earlyRollcallAlertGate.consume(event.utteranceId)
                         LiveStreamBus.pushFinal(
                             utteranceId = event.utteranceId,
                             text = event.text,
                             startOffsetMs = event.startOffsetMs,
                             endOffsetMs = event.endOffsetMs,
                         )
-                        dispatchWrite(courseId, event)
+                        dispatchWrite(courseId, event, earlyAlerted)
                     }
 
                     else -> Unit
@@ -222,17 +234,25 @@ private class SessionPipelineAdapter(
     }
 
     /** 独立写 Job：join 前一个写 Job 实现串行；写 Job 是 scope 的孩子，收集器取消不会波及。 */
-    private fun dispatchWrite(courseId: Long, final: StreamingAsrEvent.Final) {
+    private fun dispatchWrite(
+        courseId: Long,
+        final: StreamingAsrEvent.Final,
+        earlyAlerted: Boolean,
+    ) {
         val previous = writeJob
         val job = scope.launch {
             previous?.join()
-            processSegment(courseId, final)
+            processSegment(courseId, final, earlyAlerted)
         }
         writeJob = job
     }
 
     /** Final-only 顺序：转写落库 → 事件检测 → 事件落库 → 提醒/回答。 */
-    private suspend fun processSegment(courseId: Long, final: StreamingAsrEvent.Final) {
+    private suspend fun processSegment(
+        courseId: Long,
+        final: StreamingAsrEvent.Final,
+        earlyAlerted: Boolean,
+    ) {
         val segment = final.text
         val seq = store.nextChunkSeq()
         val chunkTs = System.currentTimeMillis()
@@ -294,7 +314,9 @@ private class SessionPipelineAdapter(
                     ),
                 )
             }
-            alert.fire(contextEvent, context)
+            if (!(contextEvent.type == EventType.ROLLCALL && earlyAlerted)) {
+                alert.fire(contextEvent, context)
+            }
             when (contextEvent.type) {
                 EventType.ROLLCALL -> Unit
                 EventType.QUESTION -> onQuestion(contextEvent, eventId, db)
@@ -314,6 +336,7 @@ private class SessionPipelineAdapter(
             w.join()
             writeJob = null
         }
+        earlyRollcallAlertGate.clear()
     }
 }
 

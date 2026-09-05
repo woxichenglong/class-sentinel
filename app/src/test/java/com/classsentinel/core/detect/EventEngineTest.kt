@@ -60,6 +60,76 @@ class EventEngineTest {
     }
 
     @Test
+    fun `exact-name partial creates rollcall before final`() {
+        val event = engine().processPartialRollcall(
+            utteranceId = 7,
+            text = "张伟，你来回答",
+            ts = 1_000,
+        )
+
+        assertEquals(EventType.ROLLCALL, event?.type)
+        assertEquals("PARTIAL_EXACT_NAME", event?.reason)
+    }
+
+    @Test
+    fun `repeated exact partials for one utterance alert only once`() {
+        val eng = engine()
+
+        assertNotNull(eng.processPartialRollcall(7, "张伟，你来", ts = 1_000))
+        assertNull(eng.processPartialRollcall(7, "张伟，你来回答", ts = 1_200))
+    }
+
+    @Test
+    fun `early partial followed by confirming final still returns authoritative rollcall`() {
+        val eng = engine()
+
+        assertNotNull(eng.processPartialRollcall(7, "张伟，你来", ts = 1_000))
+        val event = eng.processFinal(
+            FinalTranscript(7, "张伟，你来回答", 0L, 2_000L),
+            ts = 2_000,
+        )
+
+        assertEquals(EventType.ROLLCALL, event?.type)
+    }
+
+    @Test
+    fun `early partial followed by final without the name creates no rollcall`() {
+        val eng = engine()
+
+        assertNotNull(eng.processPartialRollcall(7, "张伟，你来", ts = 1_000))
+        assertNull(
+            eng.processFinal(
+                FinalTranscript(7, "老师请继续讲", 0L, 2_000L),
+                ts = 2_000,
+            ),
+        )
+    }
+
+    @Test
+    fun `fuzzy-only partial waits for final while final can still rollcall`() {
+        val eng = engine()
+
+        assertNull(eng.processPartialRollcall(7, "章伟，你来一下", ts = 1_000))
+        val final = eng.processFinal(
+            FinalTranscript(7, "章伟，你来一下", 0L, 2_000L),
+            ts = 2_000,
+        )
+
+        assertEquals(EventType.ROLLCALL, final?.type)
+    }
+
+    @Test
+    fun `partial question text never creates a question event`() {
+        val event = engine().processPartialRollcall(
+            utteranceId = 7,
+            text = "哪位同学能说说为什么",
+            ts = 1_000,
+        )
+
+        assertNull(event)
+    }
+
+    @Test
     fun `name final followed by question final creates one direct question`() {
         val eng = engine()
 

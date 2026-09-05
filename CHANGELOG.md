@@ -13,14 +13,15 @@
 - 旧 `SpeechEngine`、`VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和 fallback 暂留在 WAV 导入/pending recovery 边界，不作为实时链路 fallback；删除前必须先证明无生产引用。
 - 新增 `docs/asr-refactor-checklist.md`，记录保留、隔离、删除候选、接口守护规则和下一切片准入条件。
 - 日常本地 ASR 新增 profile 选择：设置页可选 14M baseline、small bilingual、X-ASR 480/960；选择写入独立的 `local_asr_model_id`，每次新监听按同一 profile 安装/复用模型，默认仍为 14M，切换不热切换当前会话。
+- 修复点名提醒时机：新增只针对 ROLLCALL 的 Partial exact-name fast path；同一 utterance 只提前提醒一次，Final 仍权威落库，已提前提醒的最终 ROLLCALL 不重复 alert，QUESTION/LLM 仍保持 Final-only。
 
 ### 验证
 
 - P1/P2 focused regression：51 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：86 个测试类、450 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：87 个测试类、461 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
 - 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；small bilingual 与 X-ASR 480/960 均进入日常可选列表，X-ASR 大文件仍未内置进 APK，需先用 debug importer 准备。
-- 本轮 Debug APK：223,640,907 bytes；SHA-256 为 `699c01b7f2c2313244b874d62874659b7e53f163c33c8d829e0d42cd9d3ff92c`。
+- 本轮 Debug APK：223,640,995 bytes；SHA-256 为 `1dbd2743dcc94bd4da97d208ccc0a517e7d520110b0333afccbff95f3f1cfac6`。
 
 ### 模型实验门
 

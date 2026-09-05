@@ -107,6 +107,7 @@ AudioStreamer
 - `[已完成]` small bilingual 官方 artifact、许可证、配置和四文件 size/SHA-256；已加入 `SMALL_BILINGUAL_ZH_EN` profile，可在设置页作为日常模型选择，默认仍为 14M；root artifact 的默认 chunk size 32 不映射为毫秒。
 - `[已完成]` debug-only model importer：只在 debug source set 提供按 profile 导入外部四文件的私有目录 seam；replay 不绑定直接写应用私有目录。
 - `[已完成]` X-ASR 官方 Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 480/960 两个 deployment artifact、许可证、配置和四文件 size/SHA-256；已加入 `X_ASR_480`/`X_ASR_960` profile 及日常选择器，未打入 APK，需先通过 debug importer 准备。
+- `[已完成]` 点名 Partial fast path：`EventEngine.processPartialRollcall()` 仅接受文本 exact 且 `score == 1.0`，同 utterance 去重；Partial 只触发 ROLLCALL alert，不写 DB/不触发 QUESTION/LLM，Final 继续权威落库并跳过已提前提醒的重复 ROLLCALL alert。
 - `[已完成]` 两个 X-ASR profile 均按官方 deployment config 完成 host smoke；在此之前未运行正式 A/B。
 - `[部分完成]` 用同一官方 `test_wavs/0.wav` 完成 A/B/C/D 的 1-clip FAST smoke；另有 `proxy-finance-v1` 的 30 scripts/60 WAV，B/C/D FAST 及 C/D quiet/classroom REALTIME 证据。结果只作流程/候选筛选证据，不能替代真实金融课堂 corpus 或 K80 测量。
 - `[待补]` 固定金融课堂 corpus、reference transcript、扩大样本后的 FAST 结果、warm-up/交错顺序记录和 K80 E2E 采集。

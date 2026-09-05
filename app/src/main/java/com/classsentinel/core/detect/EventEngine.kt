@@ -28,6 +28,8 @@ class EventEngine(
     private var lastQuestionTs = 0L
     private val finalWindow = FinalTranscriptWindow()
     private val processedFinalIds = mutableSetOf<Int>()
+    private val processedPartialRollcallIds = mutableSetOf<Int>()
+    private val earlyRollcallIds = mutableSetOf<Int>()
     private var syntheticFinalId = 0
 
     /** Clear all per-listening-session state before a reused handle starts a new course. */
@@ -35,6 +37,8 @@ class EventEngine(
         lastRollcallTs = 0L
         lastQuestionTs = 0L
         processedFinalIds.clear()
+        processedPartialRollcallIds.clear()
+        earlyRollcallIds.clear()
         syntheticFinalId = 0
         finalWindow.clear()
     }
@@ -72,8 +76,39 @@ class EventEngine(
         return null
     }
 
+    /**
+     * Fast path for live rollcall only. Partial hypotheses are allowed to alert on a textual
+     * exact name hit, but never create a question, persist an event, or invoke the LLM.
+     */
+    fun processPartialRollcall(
+        utteranceId: Int,
+        text: String,
+        ts: Long = System.currentTimeMillis(),
+    ): ClassEvent? {
+        if (text.isBlank() || utteranceId in processedPartialRollcallIds) return null
+        val sens = sensitivityFlow.value
+        val hit = nameMatcher.detect(text, sens) ?: return null
+        if (!hit.isExact || hit.score != 1.0) return null
+
+        processedPartialRollcallIds += utteranceId
+        if (lastRollcallTs == 0L || ts - lastRollcallTs >= sens.rollcallSuppressMs) {
+            lastRollcallTs = ts
+            earlyRollcallIds += utteranceId
+            return ClassEvent(
+                type = EventType.ROLLCALL,
+                triggerText = text,
+                context = text,
+                ts = ts,
+                scope = EventScope.ROLLCALL,
+                reason = "PARTIAL_EXACT_NAME",
+            )
+        }
+        return null
+    }
+
     /** Processes authoritative final text; partial hypotheses must never call this method. */
     fun processFinal(final: FinalTranscript, ts: Long = System.currentTimeMillis()): ClassEvent? {
+        val earlyRollcall = earlyRollcallIds.remove(final.utteranceId)
         if (final.text.isBlank() || !processedFinalIds.add(final.utteranceId)) return null
         val window = finalWindow.add(final)
         val combined = window.combinedText
@@ -100,6 +135,20 @@ class EventEngine(
 
         // 1. 姓名命中但没有问题：只做点名提醒，不调用 LLM。
         nameHit?.let {
+            if (earlyRollcall) {
+                // Partial already advanced the rollcall suppression clock. The final still must
+                // produce the authoritative DB event; the service adapter suppresses only its
+                // duplicate alert.
+                lastRollcallTs = ts
+                return ClassEvent(
+                    type = EventType.ROLLCALL,
+                    triggerText = final.text,
+                    context = combined,
+                    ts = ts,
+                    scope = EventScope.ROLLCALL,
+                    reason = "NAME_ONLY",
+                )
+            }
             if (lastRollcallTs == 0L || ts - lastRollcallTs >= sens.rollcallSuppressMs) {
                 lastRollcallTs = ts
                 return ClassEvent(

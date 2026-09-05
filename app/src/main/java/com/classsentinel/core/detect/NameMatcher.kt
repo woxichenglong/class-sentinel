@@ -19,7 +19,12 @@ class NameMatcher private constructor(
     /** 动态名字表（生产：AppConfig.names 热更新） */
     constructor(namesFlow: kotlinx.coroutines.flow.StateFlow<List<NameEntry>>) : this({ namesFlow.value })
 
-    data class Hit(val name: String, val matched: String, val score: Double)
+    data class Hit(
+        val name: String,
+        val matched: String,
+        val score: Double,
+        val isExact: Boolean = false,
+    )
 
     private val contextWords =
         listOf("来", "回答", "在不在", "在吗", "起立", "上来", "说说", "讲一下", "发言")
@@ -37,7 +42,7 @@ class NameMatcher private constructor(
                 if (v.isEmpty()) continue
                 // 精确包含：最强命中，立即返回（过上下文门槛）
                 if (segment.contains(v)) {
-                    val hit = Hit(entry.display, v, 1.0)
+                    val hit = Hit(entry.display, v, 1.0, isExact = true)
                     return contextGate(segment, hit, sensitivity)
                 }
                 // 滑窗模糊：按变体长度滑窗算拼音相似度

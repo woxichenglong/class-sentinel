@@ -1,8 +1,10 @@
 package com.classsentinel.core.detect
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONArray
 
@@ -44,6 +46,16 @@ class NameMatcherTest {
         // ASR 把「张伟」听成「章伟」：zhangwei vs zhangwei 相似度极高
         val hit = NameMatcher(names).detect("章伟，你来一下", Sensitivity.STANDARD)
         assertEquals("张伟", hit?.name)
+    }
+
+    @Test
+    fun `hit metadata distinguishes textual exact from homophone fuzzy`() {
+        val exact = NameMatcher(names).detect("张伟，你来一下", Sensitivity.STANDARD)
+        val fuzzy = NameMatcher(names).detect("章伟，你来一下", Sensitivity.STANDARD)
+
+        assertTrue(exact?.isExact == true)
+        assertNotNull(fuzzy)
+        assertFalse(fuzzy?.isExact == true)
     }
 
     @Test
