@@ -31,6 +31,12 @@ class AlertCoordinatorTest {
         }
     }
 
+    private class FailingChannel(override val key: String) : AlertChannel {
+        override fun fire(event: ClassEvent, context: Context) {
+            throw IllegalStateException("channel failure")
+        }
+    }
+
     @Test
     fun `全开时 fire 调用全部通道并透传事件与上下文`() = runTest {
         val a = FakeChannel("a")
@@ -87,6 +93,24 @@ class AlertCoordinatorTest {
         val coordinator = AlertCoordinator(emptyList(), MutableStateFlow(setOf("a")), this)
         advanceUntilIdle()
         coordinator.fire(event, ctx)
+        coordinator.close()
+    }
+
+    @Test
+    fun `one channel failure does not block other channels or later events`() = runTest {
+        val failing = FailingChannel("failing")
+        val healthy = FakeChannel("healthy")
+        val coordinator = AlertCoordinator(
+            channels = listOf(failing, healthy),
+            enabledFlow = MutableStateFlow(setOf("failing", "healthy")),
+            scope = this,
+        )
+        advanceUntilIdle()
+
+        coordinator.fire(event, ctx)
+        coordinator.fire(event, ctx)
+
+        assertEquals(2, healthy.fired)
         coordinator.close()
     }
 }

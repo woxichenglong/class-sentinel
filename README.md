@@ -11,8 +11,8 @@
 
 | 检查 | 命令/依据 | 结果 |
 |---|---|---|
-| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 87 个测试类、466 个用例；失败 0、错误 0、跳过 0 |
-| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，223,640,995 bytes；SHA-256：`8727b489aae21e6925db518462307c9153f3f15dc3a1258f1830c5f1a1dfc8e2` |
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 89 个测试类、478 个用例；失败 0、错误 0、跳过 0 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，223,657,379 bytes；SHA-256：`c52f088e0938b9c2693720bc0a3807abd37106cc1d7b4cfd30c92e55ef45e3f3` |
 | 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 16 个，消费者 key 16 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
@@ -186,7 +186,7 @@ app/src/main/java/com/classsentinel/
 
 ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a user-selectable local sherpa-onnx streaming ASR profile, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate (466 tests across 87 test classes), a clean Android Lint report, and a successful debug APK build. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence. This is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate (478 tests across 89 test classes), a clean Android Lint report, and a successful debug APK build. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; model readiness is checked off the UI thread and a live START is not issued before preparation succeeds. This is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

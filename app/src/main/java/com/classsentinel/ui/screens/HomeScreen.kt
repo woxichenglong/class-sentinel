@@ -31,6 +31,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,12 +41,22 @@ import androidx.core.content.ContextCompat
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.core.speech.ModelProfile
+import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveStreamBus
 import com.classsentinel.ui.isSessionActive
+import kotlinx.coroutines.launch
 import java.io.File
+
+internal enum class LocalListeningStartGate {
+    READY,
+    MODEL_NOT_READY,
+}
+
+internal fun localListeningStartGate(modelReady: Boolean?): LocalListeningStartGate =
+    if (modelReady == true) LocalListeningStartGate.READY else LocalListeningStartGate.MODEL_NOT_READY
 
 internal fun homeStateText(state: PipelineState): String = when (state) {
     PipelineState.Idle -> "未在监听"
@@ -73,11 +84,12 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val settings = remember { com.classsentinel.data.SettingsRepositoryHolder.get(context) }
     val localAsrModelId by settings.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
     val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
-    var modelReady by remember(localAsrProfile.id) {
-        mutableStateOf(localAsrModelReady(context.filesDir, localAsrProfile))
-    }
+    val readinessChecker = remember(context.filesDir) { ModelReadinessChecker(context.filesDir) }
+    val preparationScope = rememberCoroutineScope()
+    var modelReady by remember(localAsrProfile.id) { mutableStateOf<Boolean?>(null) }
+    var preparingModel by remember(localAsrProfile.id) { mutableStateOf(false) }
     LaunchedEffect(pipelineState, localAsrProfile.id) {
-        modelReady = localAsrModelReady(context.filesDir, localAsrProfile)
+        modelReady = readinessChecker.isReady(localAsrProfile)
     }
 
     val listening = pipelineState.isSessionActive() || activeCourseId != null
@@ -91,6 +103,28 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     fun toggleListening() {
         if (listening) {
             ListenService.stop(context)
+        } else if (localListeningStartGate(modelReady) == LocalListeningStartGate.MODEL_NOT_READY) {
+            if (preparingModel) return
+            preparingModel = true
+            preparationScope.launch {
+                val prepared = readinessChecker.ensureReady(
+                    profile = localAsrProfile,
+                    assetOpener = { path -> context.applicationContext.assets.open(path) },
+                )
+                modelReady = prepared
+                preparingModel = false
+                if (prepared) {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        ListenService.start(context)
+                    } else {
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                } else {
+                    Toast.makeText(context, "模型未准备，无法开始监听", Toast.LENGTH_SHORT).show()
+                }
+            }
         } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -115,6 +149,7 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
 
         Button(
             onClick = ::toggleListening,
+            enabled = !preparingModel,
             modifier = Modifier.fillMaxWidth().height(104.dp),
             shape = RoundedCornerShape(20.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -122,7 +157,14 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.Mic, contentDescription = null)
                 Spacer(Modifier.height(6.dp))
-                Text(if (listening) "停止监听" else "开始监听", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    when {
+                        listening -> "停止监听"
+                        preparingModel -> "准备模型…"
+                        else -> "开始监听"
+                    },
+                    style = MaterialTheme.typography.titleLarge,
+                )
             }
         }
 
@@ -140,7 +182,13 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("本地转写模型", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(if (modelReady) "已就绪" else "未准备")
+                    Text(
+                        when (modelReady) {
+                            true -> "已就绪"
+                            false -> "未准备"
+                            null -> "检查中…"
+                        },
+                    )
                 }
                 Text(localAsrProfile.displayName, style = MaterialTheme.typography.bodySmall)
             }

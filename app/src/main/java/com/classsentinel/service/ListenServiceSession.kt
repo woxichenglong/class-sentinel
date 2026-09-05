@@ -42,7 +42,9 @@ internal class ListenServiceSession(
                     val session = synchronized(lock) { handle } ?: createHandle().also { created ->
                         synchronized(lock) { if (handle == null) handle = created }
                     }
-                    session.start()
+                    if (!session.start()) {
+                        throw IllegalStateException("SESSION_START_REJECTED")
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -78,6 +80,6 @@ internal class ListenServiceSession(
 
 /** 会话句柄契约：由 [ListenServiceSession] 协调的监听会话。 */
 internal interface ListenSessionHandle {
-    suspend fun start()
+    suspend fun start(): Boolean
     suspend fun stop(): Boolean
 }

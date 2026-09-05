@@ -27,6 +27,13 @@ class HomeScreenStateTest {
     }
 
     @Test
+    fun `home start gate never allows service start before model readiness`() {
+        assertEquals(LocalListeningStartGate.MODEL_NOT_READY, localListeningStartGate(null))
+        assertEquals(LocalListeningStartGate.MODEL_NOT_READY, localListeningStartGate(false))
+        assertEquals(LocalListeningStartGate.READY, localListeningStartGate(true))
+    }
+
+    @Test
     fun `local model status requires the validated profile marker and all files`() {
         val root = temporaryFolder.newFolder("files")
         val profile = testProfile("home-model")

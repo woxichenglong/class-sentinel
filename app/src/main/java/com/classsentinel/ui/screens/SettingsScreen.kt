@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiProviderPreset
+import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.data.AiSettings
 import com.classsentinel.data.AnswerHistoryRepository
@@ -89,6 +90,11 @@ fun SettingsScreen() {
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
     val localAsrModelId by repo.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
     val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
+    val readinessChecker = remember(context.filesDir) { ModelReadinessChecker(context.filesDir) }
+    var localModelReady by remember(localAsrProfile.id) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(localAsrProfile.id) {
+        localModelReady = readinessChecker.isReady(localAsrProfile)
+    }
 
     var draftName by rememberSaveable { mutableStateOf("") }
     var draftVariants by rememberSaveable { mutableStateOf("") }
@@ -317,12 +323,14 @@ fun SettingsScreen() {
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (localAsrModelReady(context.filesDir, localAsrProfile)) {
-                        "模型已就绪，实时转写不会上传音频"
-                    } else if (localAsrProfile == ModelProfiles.X_ASR_480 || localAsrProfile == ModelProfiles.X_ASR_960) {
-                        "该 X-ASR 模型尚未导入；切换后需先准备模型文件"
-                    } else {
-                        "模型将在首次开始监听时安装到应用私有目录"
+                    when (localModelReady) {
+                        true -> "模型已就绪，实时转写不会上传音频"
+                        false -> if (localAsrProfile == ModelProfiles.X_ASR_480 || localAsrProfile == ModelProfiles.X_ASR_960) {
+                            "该 X-ASR 模型尚未导入；开始监听前需先准备模型文件"
+                        } else {
+                            "模型尚未准备；开始监听前会先在后台准备"
+                        }
+                        null -> "正在后台检查模型文件…"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

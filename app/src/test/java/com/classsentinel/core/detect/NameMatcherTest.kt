@@ -59,6 +59,17 @@ class NameMatcherTest {
     }
 
     @Test
+    fun `failed short variant gate does not hide a later full exact name`() {
+        val matcher = NameMatcher(listOf(NameEntry("张晨龙", listOf("晨"))))
+
+        val hit = matcher.detect("张晨龙来回答", Sensitivity.STANDARD)
+
+        assertEquals("张晨龙", hit?.name)
+        assertEquals("张晨龙", hit?.matched)
+        assertTrue(hit?.isExact == true)
+    }
+
+    @Test
     fun `unrelated name not hit`() {
         assertNull(NameMatcher(names).detect("李华，你来回答", Sensitivity.LOOSE))
     }

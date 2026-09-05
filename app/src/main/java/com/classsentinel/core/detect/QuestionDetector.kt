@@ -37,22 +37,26 @@ object QuestionDetector {
         "有没有问题",
         "吗",
     )
-    private val openMarkers = listOf(
+    private val openMarkersLevel1 = listOf(
+        "解释",
+        "回答一下",
+        "回答这个问题",
+    )
+    private val openMarkersLevel2 = openMarkersLevel1 + listOf(
         "为什么",
         "怎么",
         "如何",
-        "什么是",
-        "解释",
-        "举个例子",
-        "举例",
         "谈谈",
         "说一下",
-        "说说",
-        "讲讲",
-        "回答一下",
-        "回答这个问题",
         "思考一下",
         "怎么看",
+    )
+    private val openMarkersLevel3 = openMarkersLevel2 + listOf(
+        "什么是",
+        "举个例子",
+        "举例",
+        "说说",
+        "讲讲",
     )
 
     /** 命中返回触发词，否则 null */
@@ -69,14 +73,25 @@ object QuestionDetector {
         if (classInviteMarkers.any { segment.contains(it) }) {
             return AnswerableQuestion(EventScope.CLASS_OPEN, "CLASS_INVITE")
         }
-        if (binaryMarkers.any { segment.contains(it) }) return null
-        if (directMarkers.any { segment.contains(it) } && openMarkers.any { segment.contains(it) }) {
+        val openMarkers = openMarkers(level)
+        val hasOpenMarker = openMarkers.any { segment.contains(it) }
+        if (directMarkers.any { segment.contains(it) } && hasOpenMarker) {
             return AnswerableQuestion(EventScope.DIRECT, "DIRECT_REQUEST")
         }
-        if (openMarkers.any { segment.contains(it) } || detect(segment, level) != null) {
+        if (hasOpenMarker) {
+            return AnswerableQuestion(EventScope.CLASS_OPEN, "OPEN_QUESTION")
+        }
+        if (binaryMarkers.any { segment.contains(it) }) return null
+        if (detect(segment, level) != null) {
             return AnswerableQuestion(EventScope.CLASS_OPEN, "OPEN_QUESTION")
         }
         return null
+    }
+
+    private fun openMarkers(level: Int): List<String> = when (level) {
+        1 -> openMarkersLevel1
+        2 -> openMarkersLevel2
+        else -> openMarkersLevel3
     }
 
     private fun words(level: Int): List<String> = when (level) {

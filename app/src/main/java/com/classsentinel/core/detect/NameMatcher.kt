@@ -43,7 +43,8 @@ class NameMatcher private constructor(
                 // 精确包含：最强命中，立即返回（过上下文门槛）
                 if (segment.contains(v)) {
                     val hit = Hit(entry.display, v, 1.0, isExact = true)
-                    return contextGate(segment, hit, sensitivity)
+                    contextGate(segment, hit, sensitivity)?.let { return it }
+                    continue
                 }
                 // 滑窗模糊：按变体长度滑窗算拼音相似度
                 val window = v.length.coerceAtLeast(2)

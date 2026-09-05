@@ -2,6 +2,7 @@ package com.classsentinel.core.alert
 
 import android.content.Context
 import com.classsentinel.core.detect.ClassEvent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,7 +49,14 @@ class AlertCoordinator(
         val keys = enabledKeys()
         for (channel in channels) {
             if (channel.key in keys) {
-                channel.fire(event, context)
+                try {
+                    channel.fire(event, context)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // One broken delivery channel must not stop the remaining channels or the
+                    // event collector. The channel has no safe user-facing error payload here.
+                }
             }
         }
     }

@@ -13,9 +13,9 @@ data class Sensitivity(
     val questionSuppressMs: Long = 120_000,
 ) {
     companion object {
-        val STRICT = Sensitivity(0.92, true, 3, -30)
+        val STRICT = Sensitivity(0.92, true, 1, -30)
         val STANDARD = Sensitivity(0.80, true, 2, -35)
-        val LOOSE = Sensitivity(0.68, false, 1, -40)
+        val LOOSE = Sensitivity(0.68, false, 3, -40)
 
         fun preset(name: String): Sensitivity = when (name) {
             "strict" -> STRICT

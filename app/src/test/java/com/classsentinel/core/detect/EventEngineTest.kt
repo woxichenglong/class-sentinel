@@ -53,6 +53,44 @@ class EventEngineTest {
     }
 
     @Test
+    fun `class open suppression does not block a later direct question`() {
+        val eng = engine()
+
+        val classOpen = eng.processFinal(
+            FinalTranscript(1, "为什么价格上涨", 0L, 1_000L),
+            ts = 1_000,
+        )
+        assertEquals(EventScope.CLASS_OPEN, classOpen?.scope)
+
+        val direct = eng.processFinal(
+            FinalTranscript(2, "你来解释一下 CAPM 的 beta", 1_000L, 31_000L),
+            ts = 31_000,
+        )
+
+        assertEquals(EventScope.DIRECT, direct?.scope)
+    }
+
+    @Test
+    fun `class open question does not inherit a name from the previous final`() {
+        val eng = engine()
+
+        assertNull(
+            eng.processFinal(
+                FinalTranscript(1, "张伟", 0L, 1_000L),
+                ts = 1_000,
+            ),
+        )
+
+        val event = eng.processFinal(
+            FinalTranscript(2, "谁来回答", 1_000L, 2_000L),
+            ts = 2_000,
+        )
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.CLASS_OPEN, event?.scope)
+    }
+
+    @Test
     fun `sensitivity hot update takes effect`() {
         val flow = MutableStateFlow<Sensitivity>(Sensitivity.STRICT)
         val eng = EventEngine(NameMatcher(listOf(NameEntry("张伟", emptyList()))), flow)

@@ -58,4 +58,28 @@ class QuestionDetectorTest {
         assertNull(QuestionDetector.detectAnswerable("这个结论对不对", 3))
         assertNull(QuestionDetector.detectAnswerable("是不是这样", 3))
     }
+
+    @Test
+    fun `open direct question with trailing ma is not rejected as binary`() {
+        assertEquals(
+            EventScope.DIRECT,
+            QuestionDetector.detectAnswerable("你能解释一下为什么 CAPM 成立吗", 2)?.scope,
+        )
+    }
+
+    @Test
+    fun `answerable open markers honor question word level`() {
+        assertNull(QuestionDetector.detectAnswerable("我们谈谈资本成本", 1))
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("我们谈谈资本成本", 2)?.scope,
+        )
+    }
+
+    @Test
+    fun `sensitivity presets map question levels from conservative to aggressive`() {
+        assertEquals(1, Sensitivity.STRICT.questionWordLevel)
+        assertEquals(2, Sensitivity.STANDARD.questionWordLevel)
+        assertEquals(3, Sensitivity.LOOSE.questionWordLevel)
+    }
 }

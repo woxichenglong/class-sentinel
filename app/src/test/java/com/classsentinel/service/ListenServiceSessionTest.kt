@@ -19,10 +19,11 @@ class ListenServiceSessionTest {
         val releaseStart = CompletableDeferred<Unit>()
         val handle = object : ListenSessionHandle {
             var startCount = 0
-            override suspend fun start() {
+            override suspend fun start(): Boolean {
                 startCount++
                 startEntered.complete(Unit)
                 releaseStart.await()
+                return true
             }
             override suspend fun stop(): Boolean = true
         }
@@ -52,7 +53,7 @@ class ListenServiceSessionTest {
         val releaseCreate = CompletableDeferred<Unit>()
         val events = mutableListOf<String>()
         val handle = object : ListenSessionHandle {
-            override suspend fun start() = Unit
+            override suspend fun start(): Boolean = true
             override suspend fun stop(): Boolean {
                 events += "handle.stop"
                 return true
@@ -94,8 +95,9 @@ class ListenServiceSessionTest {
     fun `stop calls handle stop before stopSelfResult`() = runTest {
         val events = mutableListOf<String>()
         val handle = object : ListenSessionHandle {
-            override suspend fun start() {
+            override suspend fun start(): Boolean {
                 events += "handle.start"
+                return true
             }
             override suspend fun stop(): Boolean {
                 events += "handle.stop"
@@ -132,5 +134,25 @@ class ListenServiceSessionTest {
 
         assertEquals(IllegalStateException::class.java, failure?.javaClass)
         assertEquals(true, job.isCompleted)
+    }
+
+    @Test
+    fun `rejected handle start is reported as a service start failure`() = runTest {
+        var failure: Throwable? = null
+        val handle = object : ListenSessionHandle {
+            override suspend fun start(): Boolean = false
+            override suspend fun stop(): Boolean = true
+        }
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = { handle },
+            stopSelfResult = { true },
+            onStartFailure = { failure = it },
+        )
+
+        val job = session.start()
+        job.join()
+
+        assertEquals("SESSION_START_REJECTED", failure?.message)
     }
 }

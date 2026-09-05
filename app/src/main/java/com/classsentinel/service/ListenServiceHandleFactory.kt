@@ -103,10 +103,16 @@ internal class ListenServiceHandleFactory(
             pipeline = pipeline,
             eventEngine = eventEngine,
             alert = alert,
-            db = db,
-            store = store,
+            currentCourseId = store::currentCourseId,
+            nextChunkSeq = store::nextChunkSeq,
             contextBuffer = contextBuffer,
-            onQuestion = onQuestion,
+            onQuestion = { event, eventId -> onQuestion(event, eventId, db) },
+            insertTranscript = { chunk ->
+                withContext(Dispatchers.IO) { db.transcriptDao().insert(chunk) }
+            },
+            insertEvent = { event ->
+                withContext(Dispatchers.IO) { db.eventDao().insert(event) }
+            },
         )
         return ControllerHandle(
             ListenSessionController(
@@ -167,16 +173,18 @@ private class CourseSessionStoreAdapter(
  * 听讲管线适配：包住 [StreamingListenPipeline]，保持 final 的顺序处理。
  * 独立的 service-scope 写 Job 串行化分段处理；收集器取消不影响在途写 Job。
  */
-private class SessionPipelineAdapter(
+internal class SessionPipelineAdapter(
     private val context: Context,
     private val scope: CoroutineScope,
     private val pipeline: StreamingListenPipeline,
     private val eventEngine: EventEngine,
     private val alert: AlertCoordinator,
-    private val db: AppDatabase,
-    private val store: CourseSessionStoreAdapter,
+    private val currentCourseId: () -> Long?,
+    private val nextChunkSeq: () -> Int,
     private val contextBuffer: TranscriptContextBuffer,
-    private val onQuestion: (ClassEvent, Long?, AppDatabase) -> Unit,
+    private val onQuestion: (ClassEvent, Long?) -> Unit,
+    private val insertTranscript: suspend (TranscriptChunkEntity) -> Long,
+    private val insertEvent: suspend (EventEntity) -> Long,
 ) : SessionPipeline {
 
     @Volatile
@@ -189,7 +197,7 @@ private class SessionPipelineAdapter(
 
     override suspend fun start() {
         if (collector?.isActive == true) return
-        val courseId = store.currentCourseId() ?: return
+        val courseId = currentCourseId() ?: return
         eventEngine.resetSession()
         earlyRollcallAlertGate.clear()
         // 新课程/新会话开始时清空滚动上下文缓冲，避免跨课程残留。
@@ -247,17 +255,17 @@ private class SessionPipelineAdapter(
         writeJob = job
     }
 
-    /** Final-only 顺序：转写落库 → 事件检测 → 事件落库 → 提醒/回答。 */
-    private suspend fun processSegment(
+    /** Final-only 顺序：持久化 best-effort；事件提醒独立于任一 Room 写入。 */
+    internal suspend fun processSegment(
         courseId: Long,
         final: StreamingAsrEvent.Final,
         earlyAlerted: Boolean,
     ) {
         val segment = final.text
-        val seq = store.nextChunkSeq()
+        val seq = nextChunkSeq()
         val chunkTs = System.currentTimeMillis()
-        val chunkId = withContext(Dispatchers.IO) {
-            db.transcriptDao().insert(
+        val chunkId = bestEffortWrite {
+            insertTranscript(
                 TranscriptChunkEntity(
                     courseId = courseId,
                     seq = seq,
@@ -269,9 +277,9 @@ private class SessionPipelineAdapter(
                 ),
             )
         }
-        // 先落库再发布“最近一句”资格；final 文本已由 event collector 推入 LiveBus，
-        // 这里不能再次 pushSegment，否则每句 final 会在实时页面重复一次。
-        LiveStreamBus.pushLatestChunk(courseId, chunkId)
+        // 只有 transcript 真正落库后才发布“最近一句”资格；final 文本已由 event collector
+        // 推入 LiveBus，这里不能再次 pushSegment，否则每句 final 会在实时页面重复一次。
+        chunkId?.let { LiveStreamBus.pushLatestChunk(courseId, it) }
         LiveStreamBus.pushState(pipeline.state.value)
         // 事件时间与 final 一致；事件上下文为当前段之前的滚动课堂上下文
         // 加上当前 final，供详情与 AnswerService 使用。
@@ -300,9 +308,8 @@ private class SessionPipelineAdapter(
                     ?.plus("\n")
                     .orEmpty() + segment).trim(),
             )
-            var eventId: Long? = null
-            withContext(Dispatchers.IO) {
-                eventId = db.eventDao().insert(
+            val eventId = bestEffortWrite {
+                insertEvent(
                     EventEntity(
                         courseId = courseId,
                         type = contextEvent.type.name,
@@ -319,9 +326,17 @@ private class SessionPipelineAdapter(
             }
             when (contextEvent.type) {
                 EventType.ROLLCALL -> Unit
-                EventType.QUESTION -> onQuestion(contextEvent, eventId, db)
+                EventType.QUESTION -> if (eventId != null) onQuestion(contextEvent, eventId)
             }
         }
+    }
+
+    private suspend fun <T> bestEffortWrite(write: suspend () -> T): T? = try {
+        withContext(Dispatchers.IO) { write() }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
     }
 
     override suspend fun stop() {
@@ -344,9 +359,7 @@ private class SessionPipelineAdapter(
 private class ControllerHandle(
     private val controller: ListenSessionController,
 ) : ListenSessionHandle {
-    override suspend fun start() {
-        controller.start()
-    }
+    override suspend fun start(): Boolean = controller.start()
 
     override suspend fun stop(): Boolean = controller.stop()
 }

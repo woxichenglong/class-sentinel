@@ -30,7 +30,7 @@ class ListenServiceTest {
         val events = mutableListOf<String>()
         val stopFinished = CompletableDeferred<Unit>()
         val handle = object : ListenSessionHandle {
-            override suspend fun start() = Unit
+            override suspend fun start(): Boolean = true
             override suspend fun stop(): Boolean {
                 events += "handle.stop"
                 stopFinished.complete(Unit)
@@ -66,9 +66,10 @@ class ListenServiceTest {
         val events = mutableListOf<String>()
         val startFinished = CompletableDeferred<Unit>()
         val handle = object : ListenSessionHandle {
-            override suspend fun start() {
+            override suspend fun start(): Boolean {
                 events += "handle.start"
                 startFinished.complete(Unit)
+                return true
             }
             override suspend fun stop(): Boolean = true
         }
@@ -102,8 +103,9 @@ class ListenServiceTest {
     fun `unknown action does not start foreground recording`() = runTest {
         val events = mutableListOf<String>()
         val handle = object : ListenSessionHandle {
-            override suspend fun start() {
+            override suspend fun start(): Boolean {
                 events += "handle.start"
+                return true
             }
 
             override suspend fun stop(): Boolean = true

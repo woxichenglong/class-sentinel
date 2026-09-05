@@ -15,14 +15,17 @@
 - 日常本地 ASR 新增 profile 选择：设置页当前只开放 14M baseline 与 small bilingual；X-ASR 480/960 留在 evaluation/debug catalog，待 live endpoint-on smoke 后再进入日常选择。选择写入独立的 `local_asr_model_id`，每次新监听按同一 profile 安装/复用模型，默认仍为 14M，切换不热切换当前会话。
 - 修复点名提醒时机：新增只针对 ROLLCALL 的 Partial exact-name fast path；同一 utterance 只提前提醒一次，Final 仍权威落库，已提前提醒的最终 ROLLCALL 不重复 alert，QUESTION/LLM 仍保持 Final-only。
 - 收紧点名时序：Partial 只保留 provisional 状态，confirmed suppression 只由 Final/legacy authoritative path 推进；X-ASR live 使用 endpoint-on，官方 deployment/smoke 保留 endpoint-off 独立模式。
+- 修复事件状态机边界：CLASS_OPEN 与 DIRECT 使用独立 question suppression；开放式“为什么/解释”优先于尾部“吗”，Question level 与 STRICT/STANDARD/LOOSE 语义一致；FinalWindow 不再用历史姓名提升当前句 scope。
+- 隔离实时副作用：姓名变体 gate 失败后继续检查完整姓名；AlertCoordinator 按通道隔离普通异常；transcript/event Room 写入失败不阻断当前提醒，QUESTION 只有拿到 eventId 才提交 LLM。
+- 模型启动增加 readiness gate：完整 hash 在 IO dispatcher 执行并带 stat-signature cache；未 ready 时先准备模型，准备失败不发 live START；controller handle 的 false start 结果会进入 service failure callback。
 
 ### 验证
 
-- Rollcall/endpoint focused regression：51 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：87 个测试类、466 个用例，失败 0、错误 0、跳过 0。
+- P0/P1 focused regression：112 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：89 个测试类、478 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
 - 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；日常选择只开放 14M/small，X-ASR 留在 evaluation/debug catalog；X-ASR live endpoint-on 与官方 endpoint-off 由独立 config mode 区分。
-- 本轮 Debug APK：223,640,995 bytes；SHA-256 为 `8727b489aae21e6925db518462307c9153f3f15dc3a1258f1830c5f1a1dfc8e2`。
+- 本轮 Debug APK：223,657,379 bytes；SHA-256 为 `c52f088e0938b9c2693720bc0a3807abd37106cc1d7b4cfd30c92e55ef45e3f3`。
 
 ### 模型实验门
 

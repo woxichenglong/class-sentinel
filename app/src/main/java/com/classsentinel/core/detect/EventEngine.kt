@@ -25,7 +25,8 @@ class EventEngine(
     private val sensitivityFlow: StateFlow<Sensitivity>,
 ) {
     private var confirmedRollcallTs = 0L
-    private var lastQuestionTs = 0L
+    private var lastDirectQuestionTs = 0L
+    private var lastClassOpenQuestionTs = 0L
     private val finalWindow = FinalTranscriptWindow()
     private val processedFinalIds = mutableSetOf<Int>()
     private val processedPartialRollcallIds = mutableSetOf<Int>()
@@ -35,7 +36,8 @@ class EventEngine(
     /** Clear all per-listening-session state before a reused handle starts a new course. */
     fun resetSession() {
         confirmedRollcallTs = 0L
-        lastQuestionTs = 0L
+        lastDirectQuestionTs = 0L
+        lastClassOpenQuestionTs = 0L
         processedFinalIds.clear()
         processedPartialRollcallIds.clear()
         provisionalRollcallIds.clear()
@@ -61,8 +63,7 @@ class EventEngine(
             return null
         }
         QuestionDetector.detect(segment, sens.questionWordLevel)?.let {
-            if (lastQuestionTs == 0L || ts - lastQuestionTs >= sens.questionSuppressMs) {
-                lastQuestionTs = ts
+            if (canEmitQuestion(EventScope.CLASS_OPEN, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
                     triggerText = segment,
@@ -113,8 +114,10 @@ class EventEngine(
         val combined = window.combinedText
         val sens = sensitivityFlow.value
 
-        val question = QuestionDetector.detectAnswerable(combined, sens.questionWordLevel)
-        val nameHit = nameMatcher.detect(combined, sens)
+        // Use only the current final for event classification. The rolling window is context for
+        // the persisted event/answer, not evidence that an old name targets this new sentence.
+        val question = QuestionDetector.detectAnswerable(final.text, sens.questionWordLevel)
+        val nameHit = nameMatcher.detect(final.text, sens)
 
         // A confirming final commits the provisional alert to the authoritative suppression clock.
         // A rewritten final without a name does not, so a false partial cannot suppress later calls.
@@ -124,8 +127,7 @@ class EventEngine(
 
         // 明确问当前学生：姓名命中会把开放题提升为 DIRECT；高置信度“你”由 detector 自己识别。
         if (question != null && (question.scope == EventScope.DIRECT || nameHit != null)) {
-            if (lastQuestionTs == 0L || ts - lastQuestionTs >= sens.questionSuppressMs) {
-                lastQuestionTs = ts
+            if (canEmitQuestion(EventScope.DIRECT, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
                     triggerText = final.text,
@@ -168,8 +170,7 @@ class EventEngine(
 
         // 2. 无姓名的高置信度开放题/明确邀请。
         if (question?.scope == EventScope.CLASS_OPEN) {
-            if (lastQuestionTs == 0L || ts - lastQuestionTs >= sens.questionSuppressMs) {
-                lastQuestionTs = ts
+            if (canEmitQuestion(EventScope.CLASS_OPEN, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
                     triggerText = final.text,
@@ -181,5 +182,16 @@ class EventEngine(
             }
         }
         return null
+    }
+
+    private fun canEmitQuestion(scope: EventScope, ts: Long, suppressionMs: Long): Boolean {
+        val lastTs = if (scope == EventScope.DIRECT) lastDirectQuestionTs else lastClassOpenQuestionTs
+        if (lastTs != 0L && ts - lastTs < suppressionMs) return false
+        if (scope == EventScope.DIRECT) {
+            lastDirectQuestionTs = ts
+        } else {
+            lastClassOpenQuestionTs = ts
+        }
+        return true
     }
 }

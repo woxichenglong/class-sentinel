@@ -56,6 +56,7 @@ internal class SherpaModelInstaller(
             }
         }
         writeMarker(targetDir)
+        ModelReadinessChecker.invalidate(filesDir, profile)
         return targetDir
     }
 
