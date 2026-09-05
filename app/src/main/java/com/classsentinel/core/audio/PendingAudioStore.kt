@@ -116,6 +116,32 @@ class PendingAudioStore(
     }
 
     /**
+     * Safely sweep old final WAV files that are no longer referenced by any DB row.
+     *
+     * The caller supplies canonical DB references; this method owns root, filename, temp-file,
+     * ordinary-file, age, and deletion rules so cleanup cannot grow a second path policy.
+     */
+    internal fun sweepOrphans(
+        referencedPaths: Set<String>,
+        nowMillis: Long,
+        gracePeriodMs: Long,
+    ): PendingAudioOrphanSweepResult {
+        val files = rootDir.listFiles() ?: return PendingAudioOrphanSweepResult()
+        var deleted = 0
+        var failures = 0
+        files.forEach { file ->
+            if (!file.isFile || file.name.startsWith(".tmp-") || !PENDING_WAV_NAME.matches(file.name)) return@forEach
+            if (!isInsideRoot(file)) return@forEach
+            if (file.canonicalPath in referencedPaths) return@forEach
+            val modified = file.lastModified()
+            val age = nowMillis - modified
+            if (modified <= 0L || age < 0L || age < gracePeriodMs) return@forEach
+            if (file.delete()) deleted++ else failures++
+        }
+        return PendingAudioOrphanSweepResult(deleted = deleted, failures = failures)
+    }
+
+    /**
      * 返回可交给 [android.media.MediaPlayer] 的私有 WAV 文件。
      *
      * 回放和删除使用同一个根目录边界：数据库中的旧/恶意路径即使指向一个合法文件，
@@ -192,6 +218,7 @@ class PendingAudioStore(
     private companion object {
         /** 最小合法 WAV 长度：44 字节标准头 + 1 个 PCM16 采样。 */
         private const val MIN_WAV_LENGTH = 46
+        private val PENDING_WAV_NAME = Regex("^c\\d+-s[A-Za-z0-9_-]*\\.wav$")
         private val RIFF_TAG = byteArrayOf(
             'R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte(),
         )

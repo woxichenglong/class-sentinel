@@ -138,6 +138,43 @@ class SummaryWorkerTest {
     }
 
     @Test
+    fun `transient retry before attempt cap remains queued`() = runBlocking {
+        val deps = FakeDependencies(
+            transcript = "有内容",
+            configProvider = { config },
+            generator = SummaryGenerator(
+                streamChat = { _, _ ->
+                    flow { throw LlmException(LlmError(LlmError.Kind.RATE_LIMIT)) }
+                },
+            ),
+        )
+
+        val result = worker(deps, SummaryWorker.MAX_TRANSIENT_ATTEMPTS - 2).doWork()
+
+        assertEquals(ListenableWorker.Result.retry(), result)
+        assertEquals("QUEUED", deps.updates.last().status)
+    }
+
+    @Test
+    fun `transient retry at attempt cap becomes terminal failure`() = runBlocking {
+        val deps = FakeDependencies(
+            transcript = "有内容",
+            configProvider = { config },
+            generator = SummaryGenerator(
+                streamChat = { _, _ ->
+                    flow { throw LlmException(LlmError(LlmError.Kind.SERVER)) }
+                },
+            ),
+        )
+
+        val result = worker(deps, SummaryWorker.MAX_TRANSIENT_ATTEMPTS - 1).doWork()
+
+        assertTerminalFailure(result, "SERVER")
+        assertEquals("FAILED", deps.updates.last().status)
+        assertEquals("SERVER", deps.updates.last().error)
+    }
+
+    @Test
     fun `typed auth is terminal failure`() = runBlocking {
         val deps = FakeDependencies(
             transcript = "有内容",
@@ -279,9 +316,13 @@ class SummaryWorkerTest {
         )
     }
 
-    private fun worker(deps: SummaryWorkerDependencies): SummaryWorker =
+    private fun worker(
+        deps: SummaryWorkerDependencies,
+        runAttemptCount: Int = 0,
+    ): SummaryWorker =
         TestListenableWorkerBuilder.from(context, SummaryWorker::class.java)
             .setInputData(Data.Builder().putLong(SummaryWorker.KEY_COURSE_ID, 7L).build())
+            .setRunAttemptCount(runAttemptCount)
             .build()
             .apply { dependencies = deps }
 

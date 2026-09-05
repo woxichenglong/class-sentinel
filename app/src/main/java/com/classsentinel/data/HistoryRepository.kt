@@ -1,6 +1,7 @@
 package com.classsentinel.data
 
 import androidx.room.withTransaction
+import com.classsentinel.core.audio.PendingAudioOrphanCleaner
 import com.classsentinel.core.audio.PendingAudioStore
 import com.classsentinel.data.entities.PendingAudioEntity
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,11 @@ class HistoryRepository(
     private val pendingAudioStore: PendingAudioStore,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : HistoryCleanup {
+    private val orphanCleaner = PendingAudioOrphanCleaner(
+        store = pendingAudioStore,
+        dao = db.pendingAudioDao(),
+        clock = clock,
+    )
 
     /**
      * Delete finished history older than the configured retention period.
@@ -44,7 +50,8 @@ class HistoryRepository(
         retentionDays: String,
         nowMillis: Long,
     ): HistoryCleanupResult {
-        val days = parseRetentionDays(retentionDays) ?: return HistoryCleanupResult()
+        val days = parseRetentionDays(retentionDays)
+            ?: return HistoryCleanupResult().also { sweepOrphansBestEffort() }
         val ageMillis = days.coerceAtMost(Long.MAX_VALUE / DAY_MILLIS) * DAY_MILLIS
         val cutoffTs = nowMillis - ageMillis
         val (deletedCourses, pending) = db.withTransaction {
@@ -64,7 +71,7 @@ class HistoryRepository(
             }
             courses.size to pendingForCourses
         }
-        return deletePendingFiles(pending, deletedCourses)
+        return deletePendingFiles(pending, deletedCourses).also { sweepOrphansBestEffort() }
     }
 
     /**
@@ -84,7 +91,11 @@ class HistoryRepository(
             db.courseDao().clearAll()
             courses.size to pendingAll
         }
-        return deletePendingFiles(pending, deletedCourses)
+        return deletePendingFiles(pending, deletedCourses).also { sweepOrphansBestEffort() }
+    }
+
+    private suspend fun sweepOrphansBestEffort() {
+        runCatching { orphanCleaner.sweep() }
     }
 
     private suspend fun deletePendingFiles(

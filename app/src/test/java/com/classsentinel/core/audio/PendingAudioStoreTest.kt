@@ -392,4 +392,70 @@ class PendingAudioStoreTest {
         assertEquals("RETAINED", dao.inserted.single().state)
         assertTrue("retained audio remains playable", store.playbackFile(saved)?.isFile == true)
     }
+
+    @Test
+    fun `orphan sweep removes old unreferenced protocol wav but preserves referenced and recent files`() = runBlocking {
+        val referenced = store.save(courseId = 7L, segment = segment("referenced"))
+        val oldOrphan = File(root, "c7-sold.wav").apply {
+            writeBytes(wavBytes())
+            setLastModified(now - 10_000L)
+        }
+        val recentOrphan = File(root, "c7-srecent.wav").apply {
+            writeBytes(wavBytes())
+            setLastModified(now - 100L)
+        }
+        val tmpFile = File(root, ".tmp-c7-stmp.wav-123").apply {
+            writeBytes(wavBytes())
+            setLastModified(now - 10_000L)
+        }
+        val unrelated = File(root, "unrelated.wav").apply { writeBytes(wavBytes()) }
+
+        PendingAudioOrphanCleaner(
+            store = store,
+            dao = dao,
+            clock = { now },
+            orphanGracePeriodMs = 1_000L,
+        ).sweep()
+
+        assertTrue("referenced file must remain", File(referenced.filePath).exists())
+        assertFalse("old unreferenced protocol file must be removed", oldOrphan.exists())
+        assertTrue("recent orphan is protected by grace period", recentOrphan.exists())
+        assertTrue("temporary save file is ignored", tmpFile.exists())
+        assertTrue("unrelated filename is ignored", unrelated.exists())
+    }
+
+    @Test
+    fun `orphan sweep never touches a file outside private root`() = runBlocking {
+        val outside = File(tmp.root, "c7-soutside.wav").apply {
+            writeBytes(wavBytes())
+            setLastModified(now - 10_000L)
+        }
+
+        PendingAudioOrphanCleaner(
+            store = store,
+            dao = dao,
+            clock = { now },
+            orphanGracePeriodMs = 1_000L,
+        ).sweep()
+
+        assertTrue(outside.exists())
+    }
+
+    @Test
+    fun `orphan sweep removes file left after history deleted its db row`() = runBlocking {
+        val saved = store.save(courseId = 7L, segment = segment("history-failed-delete"))
+        // Simulate HistoryRepository's committed DB deletion followed by a failed file delete.
+        dao.delete(saved)
+        assertTrue(File(saved.filePath).exists())
+        File(saved.filePath).setLastModified(now - 10_000L)
+
+        PendingAudioOrphanCleaner(
+            store = store,
+            dao = dao,
+            clock = { now },
+            orphanGracePeriodMs = 1_000L,
+        ).sweep()
+
+        assertFalse(File(saved.filePath).exists())
+    }
 }

@@ -90,7 +90,7 @@ class SummaryWorker(
 
                 is SummaryGenerationResult.Failed -> {
                     val errorCode = safeErrorCode(generated.code)
-                    if (isTransientLlmFailure(errorCode)) {
+                    if (isTransientLlmFailure(errorCode) && runAttemptCount < MAX_TRANSIENT_ATTEMPTS - 1) {
                         // 保留 QUEUED，让 WorkManager 的 request backoff 负责稍后重试。
                         deps.updateSummary(courseId, SummaryStatus.QUEUED, null, errorCode)
                         ListenableWorker.Result.retry()
@@ -157,6 +157,8 @@ class SummaryWorker(
         const val ERROR_CODE_UNKNOWN = "UNKNOWN"
         const val ERROR_CODE_INVALID_INPUT = "INVALID_INPUT"
 
+        /** Total executions, including the first attempt; 5 means runAttemptCount 0..4. */
+        const val MAX_TRANSIENT_ATTEMPTS = 5
         const val BACKOFF_DELAY_MILLIS = 30_000L
         const val MAX_BACKOFF_DELAY_MILLIS = 1_800_000L
         private const val UNIQUE_WORK_PREFIX = "course-summary-"
