@@ -75,6 +75,11 @@ class PendingAudioStoreTest {
             deleted += segment
             inserted.removeAll { it.id == segment.id }
         }
+        override suspend fun deleteById(id: Long): Int {
+            val before = inserted.size
+            inserted.removeAll { it.id == id }
+            return if (before == inserted.size) 0 else 1
+        }
 
         override suspend fun deleteForCourse(courseId: Long) {
             inserted.removeAll { it.courseId == courseId }
@@ -171,6 +176,8 @@ class PendingAudioStoreTest {
         assertEquals(7L, row.courseId)
         assertEquals("s1", row.segmentId)
         assertEquals(1000L, row.durationMs) // endOffset - startOffset
+        assertEquals(500L, row.startOffsetMs)
+        assertEquals(1500L, row.endOffsetMs)
         assertEquals("PENDING", row.state)
         assertEquals(0, row.attempts)
         assertEquals("rate limited", row.lastError)

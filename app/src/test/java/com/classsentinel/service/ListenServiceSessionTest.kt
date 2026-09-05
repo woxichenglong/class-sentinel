@@ -1,6 +1,7 @@
 package com.classsentinel.service
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -88,7 +89,7 @@ class ListenServiceSessionTest {
         stopJob.join()
         startJob.join()
 
-        assertEquals(listOf("startFinished", "stopSelfResult"), events)
+        assertEquals(listOf("startFinished", "handle.stop", "stopSelfResult"), events)
     }
 
     @Test
@@ -154,5 +155,126 @@ class ListenServiceSessionTest {
         job.join()
 
         assertEquals("SESSION_START_REJECTED", failure?.message)
+    }
+
+    @Test
+    fun `stop after non cooperative start still stops the handle that reached running`() = runTest {
+        val startEntered = CompletableDeferred<Unit>()
+        val releaseStart = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val handle = object : ListenSessionHandle {
+            override suspend fun start(): Boolean {
+                events += "handle.start"
+                startEntered.complete(Unit)
+                withContext(NonCancellable) { releaseStart.await() }
+                events += "handle.running"
+                return true
+            }
+
+            override suspend fun stop(): Boolean {
+                events += "handle.stop"
+                return true
+            }
+        }
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = { handle },
+            stopSelfResult = { events += "stopSelfResult"; true },
+        )
+
+        val startJob = session.start()
+        runCurrent()
+        startEntered.await()
+        val stopJob = session.stop(7)
+        assertEquals(false, stopJob.isCompleted)
+
+        releaseStart.complete(Unit)
+        stopJob.join()
+        startJob.join()
+
+        assertEquals(
+            listOf("handle.start", "handle.running", "handle.stop", "stopSelfResult"),
+            events,
+        )
+    }
+
+    @Test
+    fun `successful stop discards handle so next start recreates it from current profile`() = runTest {
+        var selectedProfile = "profile-a"
+        val createdProfiles = mutableListOf<String>()
+        val handles = mutableListOf<ListenSessionHandle>()
+        fun newHandle(profile: String): ListenSessionHandle = object : ListenSessionHandle {
+            override suspend fun start(): Boolean = true
+            override suspend fun stop(): Boolean = true
+        }.also { handles += it }
+
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = {
+                createdProfiles += selectedProfile
+                newHandle(selectedProfile)
+            },
+            stopSelfResult = { true },
+        )
+
+        session.start().join()
+        session.stop(1).join()
+        selectedProfile = "profile-b"
+        session.start().join()
+
+        assertEquals(listOf("profile-a", "profile-b"), createdProfiles)
+        assertEquals(2, handles.size)
+    }
+
+    @Test
+    fun `concurrent and repeated stop invoke the handle stop only once`() = runTest {
+        val stopIds = mutableListOf<Int>()
+        val handle = object : ListenSessionHandle {
+            var stopCount = 0
+            override suspend fun start(): Boolean = true
+            override suspend fun stop(): Boolean {
+                stopCount++
+                return true
+            }
+        }
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = { handle },
+            stopSelfResult = { stopIds += it; true },
+        )
+
+        session.start().join()
+        val firstStop = session.stop(1)
+        val concurrentStop = session.stop(2)
+        firstStop.join()
+        concurrentStop.join()
+        session.stop(3).join()
+
+        assertEquals(1, handle.stopCount)
+        assertEquals(listOf(1, 2, 3), stopIds)
+    }
+
+    @Test
+    fun `stop preserves cancellation exception from handle stop`() = runTest {
+        var completion: Throwable? = null
+        val handle = object : ListenSessionHandle {
+            override suspend fun start(): Boolean = true
+            override suspend fun stop(): Boolean {
+                throw CancellationException("stop-cancelled")
+            }
+        }
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = { handle },
+            stopSelfResult = { true },
+        )
+
+        session.start().join()
+        val stopJob = session.stop(9)
+        stopJob.invokeOnCompletion { completion = it }
+        stopJob.join()
+
+        assertEquals(true, stopJob.isCancelled)
+        assertEquals("stop-cancelled", completion?.message)
     }
 }

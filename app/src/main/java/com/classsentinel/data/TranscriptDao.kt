@@ -12,15 +12,45 @@ interface TranscriptDao {
     @Insert
     suspend fun insert(chunk: TranscriptChunkEntity): Long
 
-    /** 按课程查询转写块，按 seq 升序（时间线顺序） */
-    @Query("SELECT * FROM transcript_chunks WHERE courseId = :courseId ORDER BY seq ASC")
+    @Query("SELECT id FROM transcript_chunks WHERE courseId = :courseId AND recoveryKey = :recoveryKey LIMIT 1")
+    suspend fun findRecoveryId(courseId: Long, recoveryKey: String): Long?
+
+    /** 按真实课堂 offset 排序；旧 0/0 行使用 seq 保持历史顺序，同 offset 再用 id 稳定打破平局。 */
+    @Query("""
+        SELECT * FROM transcript_chunks
+        WHERE courseId = :courseId
+        ORDER BY
+            CASE WHEN startOffsetMs = 0 AND endOffsetMs = 0 THEN 1 ELSE 0 END ASC,
+            startOffsetMs ASC,
+            endOffsetMs ASC,
+            seq ASC,
+            id ASC
+    """)
     suspend fun getForCourse(courseId: Long): List<TranscriptChunkEntity>
 
-    @Query("SELECT * FROM transcript_chunks WHERE courseId = :courseId ORDER BY seq ASC")
+    @Query("""
+        SELECT * FROM transcript_chunks
+        WHERE courseId = :courseId
+        ORDER BY
+            CASE WHEN startOffsetMs = 0 AND endOffsetMs = 0 THEN 1 ELSE 0 END ASC,
+            startOffsetMs ASC,
+            endOffsetMs ASC,
+            seq ASC,
+            id ASC
+    """)
     fun observeForCourse(courseId: Long): Flow<List<TranscriptChunkEntity>>
 
-    /** 只观察课程内已标记句子；仍按原课堂顺序返回。 */
-    @Query("SELECT * FROM transcript_chunks WHERE courseId = :courseId AND isMarked = 1 ORDER BY seq ASC")
+    /** 只观察课程内已标记句子；与完整历史使用同一课堂时间线排序。 */
+    @Query("""
+        SELECT * FROM transcript_chunks
+        WHERE courseId = :courseId AND isMarked = 1
+        ORDER BY
+            CASE WHEN startOffsetMs = 0 AND endOffsetMs = 0 THEN 1 ELSE 0 END ASC,
+            startOffsetMs ASC,
+            endOffsetMs ASC,
+            seq ASC,
+            id ASC
+    """)
     fun observeMarkedForCourse(courseId: Long): Flow<List<TranscriptChunkEntity>>
 
     /** 带课程条件更新，防止详情页拿到旧 id 后误标另一门课。 */

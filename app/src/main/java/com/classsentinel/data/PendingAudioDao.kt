@@ -24,6 +24,9 @@ interface PendingAudioDao {
     @Delete
     suspend fun delete(segment: PendingAudioEntity)
 
+    @Query("DELETE FROM pending_audio_segments WHERE id = :id")
+    suspend fun deleteById(id: Long): Int
+
     @Query("DELETE FROM pending_audio_segments WHERE courseId = :courseId")
     suspend fun deleteForCourse(courseId: Long)
 

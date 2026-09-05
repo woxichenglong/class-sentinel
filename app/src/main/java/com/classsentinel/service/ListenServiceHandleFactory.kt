@@ -27,6 +27,7 @@ import com.classsentinel.data.STALE_RUNNING_COURSE_TIMEOUT_MS
 import com.classsentinel.data.SettingsRepositoryHolder
 import com.classsentinel.data.entities.EventEntity
 import com.classsentinel.data.entities.TranscriptChunkEntity
+import com.classsentinel.worker.SummaryWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -114,13 +115,39 @@ internal class ListenServiceHandleFactory(
                 withContext(Dispatchers.IO) { db.eventDao().insert(event) }
             },
         )
-        return ControllerHandle(
-            ListenSessionController(
-                store = store,
-                pipeline = sessionPipeline,
-            ),
+        return createControllerHandle(
+            store = store,
+            pipeline = sessionPipeline,
+            context = context,
+            db = db,
         )
     }
+}
+
+/**
+ * 生产 ControllerHandle 装配边界：供 factory wiring 测试验证 STOP → finalize → hook。
+ * hook 的具体业务资格由调用方传入，避免在生命周期层复制 SummaryWorker 规则。
+ */
+internal fun createControllerHandle(
+    store: CourseSessionStore,
+    pipeline: SessionPipeline,
+    onCourseFinalized: suspend (Long) -> Unit,
+): ListenSessionHandle = ControllerHandle(
+    ListenSessionController(
+        store = store,
+        pipeline = pipeline,
+        onCourseFinalized = onCourseFinalized,
+    ),
+)
+
+/** 生产默认 hook：复用 SummaryWorker 的资格判断与唯一队列。 */
+internal fun createControllerHandle(
+    store: CourseSessionStore,
+    pipeline: SessionPipeline,
+    context: Context,
+    db: AppDatabase,
+): ListenSessionHandle = createControllerHandle(store, pipeline) { courseId ->
+    SummaryWorker.enqueueIfEligible(context, db, courseId)
 }
 
 /** Live production seam: local sherpa streaming only; no VAD/HTTP fallback. */

@@ -2,6 +2,7 @@ package com.classsentinel.worker
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import androidx.room.withTransaction
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -59,117 +60,142 @@ class PendingTranscriptionWorker(
         val queue = deps.queue
         val store = deps.store
         val maxAttempts = deps.maxAttempts
-        val batchLimit = deps.batchLimit
+        val boundedBatchLimit = deps.batchLimit.coerceAtLeast(1)
+        val executionBudget = deps.executionBudget.coerceAtLeast(1)
+        var processed = 0
 
-        val pending = queue.pendingSegments()
-        val batch = pending.take(batchLimit)
+        // 用有界批循环消费正常 backlog；预算耗尽才安排 continuation，避免一次 Worker
+        // 长时间清理无上限队列，也不把正常 backlog 伪装成瞬态 retry。
+        while (processed < executionBudget) {
+            val pending = queue.pendingSegments()
+            if (pending.isEmpty()) break
+            val batch = pending.take(boundedBatchLimit).take(executionBudget - processed)
 
-        // 本批次第一个安全存储错误（MISSING/CORRUPT）：继续处理/标记其余 pending 行，
-        // 全部标记终态 FAILED 后，批次整体仍须以 STORAGE 终态 failure 返回（Task 16）。
-        var firstStorageErrorCode: String? = null
+            // 本批次第一个安全存储错误（MISSING/CORRUPT）：继续处理/标记其余 pending 行，
+            // 全部标记终态 FAILED 后，批次整体仍须以 STORAGE 终态 failure 返回（Task 16）。
+            var firstStorageErrorCode: String? = null
 
-        for (entity in batch) {
-            if (isStopped) return ListenableWorker.Result.retry()
+            for (entity in batch) {
+                if (isStopped) return ListenableWorker.Result.retry()
 
-            when (val loadResult = store.load(entity)) {
-                is LoadResult.Missing -> {
-                    // 缺失文件无法恢复：终态 FAILED + 固定安全存储错误类别，不无限重试。
-                    queue.markFailed(entity, ERROR_KIND_STORAGE, ERROR_CODE_MISSING)
-                    if (firstStorageErrorCode == null) firstStorageErrorCode = ERROR_CODE_MISSING
-                    continue
-                }
-
-                is LoadResult.Corrupt -> {
-                    // 损坏 WAV 同样不可重试：终态 FAILED + 安全存储错误类别。
-                    queue.markFailed(entity, ERROR_KIND_STORAGE, ERROR_CODE_CORRUPT)
-                    if (firstStorageErrorCode == null) firstStorageErrorCode = ERROR_CODE_CORRUPT
-                    continue
-                }
-
-                is LoadResult.Success -> {
-                    val segment = WavSegment(
-                        id = entity.segmentId,
-                        startOffsetMs = 0L,
-                        endOffsetMs = entity.durationMs,
-                        bytes = loadResult.bytes,
-                    )
-
-                    val outcome: kotlin.Result<PendingSegmentResult> = try {
-                        transcriber.transcribe(segment)
-                    } catch (e: CancellationException) {
-                        throw e // 取消原样传播：不吞、不重试、不删 pending
-                    } catch (t: Throwable) {
-                        kotlin.Result.failure<PendingSegmentResult>(AsrException(t.normalizedAsrError()))
+                when (val loadResult = store.load(entity)) {
+                    is LoadResult.Missing -> {
+                        // 缺失文件无法恢复：终态 FAILED + 固定安全存储错误类别，不无限重试。
+                        queue.markFailed(entity, ERROR_KIND_STORAGE, ERROR_CODE_MISSING)
+                        if (firstStorageErrorCode == null) firstStorageErrorCode = ERROR_CODE_MISSING
+                        processed++
+                        continue
                     }
 
-                    val failure: AsrError? = when {
-                        outcome.isSuccess -> null
-                        else -> {
-                            val e = outcome.exceptionOrNull()
-                            if (e is AsrException) e.error else e?.normalizedAsrError()
-                        }
+                    is LoadResult.Corrupt -> {
+                        // 损坏 WAV 同样不可重试：终态 FAILED + 安全存储错误类别。
+                        queue.markFailed(entity, ERROR_KIND_STORAGE, ERROR_CODE_CORRUPT)
+                        if (firstStorageErrorCode == null) firstStorageErrorCode = ERROR_CODE_CORRUPT
+                        processed++
+                        continue
                     }
-                    if (failure != null) {
-                        val kind = failure.kind
-                        val isRetriable = when (kind) {
-                            AsrError.Kind.NETWORK,
-                            AsrError.Kind.RATE_LIMIT,
-                            AsrError.Kind.SERVER,
-                            -> true
-                            else -> false
+
+                    is LoadResult.Success -> {
+                        val segment = WavSegment(
+                            id = entity.segmentId,
+                            startOffsetMs = entity.startOffsetMs,
+                            endOffsetMs = resolvedEndOffset(entity),
+                            bytes = loadResult.bytes,
+                        )
+
+                        val outcome: kotlin.Result<PendingSegmentResult> = try {
+                            transcriber.transcribe(segment)
+                        } catch (e: CancellationException) {
+                            throw e // 取消原样传播：不吞、不重试、不删 pending
+                        } catch (t: Throwable) {
+                            kotlin.Result.failure<PendingSegmentResult>(AsrException(t.normalizedAsrError()))
                         }
 
-                        if (isRetriable && entity.attempts + 1 < maxAttempts) {
-                            // 保留 PENDING、递增 attempts，交给 WorkManager retry。
-                            queue.recordAttemptFailure(entity, kind.safeCode(), failure.errorCode())
-                            return ListenableWorker.Result.retry()
+                        val failure: AsrError? = when {
+                            outcome.isSuccess -> null
+                            else -> {
+                                val e = outcome.exceptionOrNull()
+                                if (e is AsrException) e.error else e?.normalizedAsrError()
+                            }
+                        }
+                        if (failure != null) {
+                            val kind = failure.kind
+                            val isRetriable = when (kind) {
+                                AsrError.Kind.NETWORK,
+                                AsrError.Kind.RATE_LIMIT,
+                                AsrError.Kind.SERVER,
+                                -> true
+                                else -> false
+                            }
+
+                            if (isRetriable && entity.attempts + 1 < maxAttempts) {
+                                // 保留 PENDING、递增 attempts，交给 WorkManager retry。
+                                queue.recordAttemptFailure(entity, kind.safeCode(), failure.errorCode())
+                                return ListenableWorker.Result.retry()
+                            }
+
+                            queue.markFailed(entity, kind.safeCode(), failure.errorCode())
+                            return failure(kind.safeCode(), failure.errorCode())
                         }
 
-                        queue.markFailed(entity, kind.safeCode(), failure.errorCode())
-                        return failure(kind.safeCode(), failure.errorCode())
-                    }
+                        val text = outcome.getOrThrow().text
+                        val transcript = TranscriptChunkEntity(
+                            courseId = entity.courseId,
+                            seq = 0,
+                            text = text,
+                            ts = deps.clock(),
+                            segmentId = entity.segmentId,
+                            recoveryKey = recoveryKey(entity),
+                            startOffsetMs = entity.startOffsetMs,
+                            endOffsetMs = resolvedEndOffset(entity),
+                        )
 
-                    val text = outcome.getOrThrow().text
-                    val transcript = TranscriptChunkEntity(
-                        courseId = entity.courseId,
-                        seq = 0,
-                        text = text,
-                        ts = deps.clock(),
-                        segmentId = entity.segmentId,
-                        startOffsetMs = 0L,
-                        endOffsetMs = entity.durationMs,
-                    )
+                        // transcript + pending 行消费必须由同一个 Room transaction 完成；
+                        // 事务失败时两者一起回滚，避免 retry 重复落库。
+                        val sinkOk = try {
+                            queue.recordTranscript(entity, transcript)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            false
+                        }
+                        if (!sinkOk) return ListenableWorker.Result.retry()
 
-                    // sink 未成功（异常或 false）绝不删除 pending；按可重试安全策略保留 PENDING。
-                    val sinkOk = try {
-                        queue.recordTranscript(transcript)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (t: Throwable) {
-                        false
-                    }
-                    if (!sinkOk) return ListenableWorker.Result.retry()
-
-                    // 只有 sink 成功才删除文件和 DB 行；delete 异常按可重试安全策略处理。
-                    try {
-                        store.delete(entity)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (t: Throwable) {
-                        return ListenableWorker.Result.retry()
+                        // transaction commit 后才 best-effort 删除 WAV；文件删除失败不能
+                        // 让已提交的 transcript 再次进入转写。
+                        try {
+                            deps.deleteAudioFile(entity)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // 文件残留交给后续清理，不回滚/重试已提交的数据库结果。
+                        }
+                        processed++
                     }
                 }
             }
+
+            // 本批次出现过不可恢复的安全存储错误（MISSING/CORRUPT）：全部行已标记终态
+            // FAILED，批次整体必须以 STORAGE 终态 failure 返回，而不是 success()（Task 16）。
+            if (firstStorageErrorCode != null) {
+                return failure(ERROR_KIND_STORAGE, firstStorageErrorCode)
+            }
         }
 
-        // 本批次出现过不可恢复的安全存储错误（MISSING/CORRUPT）：全部行已标记终态
-        // FAILED，批次整体必须以 STORAGE 终态 failure 返回，而不是 success()（Task 16）。
-        if (firstStorageErrorCode != null) {
-            return failure(ERROR_KIND_STORAGE, firstStorageErrorCode)
+        if (queue.pendingSegments().isNotEmpty()) {
+            // 预算耗尽：APPEND 一个无 backoff 的 continuation，确保 backlog 不会悬空。
+            deps.scheduleContinuation()
         }
-
         return ListenableWorker.Result.success()
     }
+
+    private fun recoveryKey(entity: PendingAudioEntity): String =
+        "pending-audio:${entity.id}"
+
+    /** 兼容未经过 v5 migration 的测试/边界实体，仍保证 end > start。 */
+    private fun resolvedEndOffset(entity: PendingAudioEntity): Long =
+        entity.endOffsetMs.takeIf { it > entity.startOffsetMs }
+            ?: (entity.startOffsetMs + entity.durationMs).coerceAtLeast(entity.startOffsetMs)
 
     private fun failure(kind: String, code: String?): ListenableWorker.Result =
         ListenableWorker.Result.failure(
@@ -223,8 +249,9 @@ class PendingTranscriptionWorker(
 
         const val DEFAULT_MAX_ATTEMPTS = 3
         const val DEFAULT_BATCH_LIMIT = 10
+        const val DEFAULT_EXECUTION_BUDGET = 50
 
-        /** 构建入队请求：CONNECTED 约束 + 指数退避 + 有界延迟。 */
+        /** 构建入队请求：CONNECTED 约束 + 瞬态失败使用指数退避 + 有界延迟。 */
         fun buildRequest(): OneTimeWorkRequest =
             OneTimeWorkRequest.Builder(PendingTranscriptionWorker::class.java)
                 .setConstraints(
@@ -239,12 +266,31 @@ class PendingTranscriptionWorker(
                 )
                 .build()
 
+        /** backlog continuation：不设置 retry backoff，正常续跑不是瞬态失败。 */
+        private fun buildContinuationRequest(): OneTimeWorkRequest =
+            OneTimeWorkRequest.Builder(PendingTranscriptionWorker::class.java)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build(),
+                )
+                .build()
+
         /** 唯一 work 名 + KEEP：避免同时重复跑同一队列。 */
         fun enqueueUnique(workManager: WorkManager) {
             workManager.enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
                 ExistingWorkPolicy.KEEP,
                 buildRequest(),
+            )
+        }
+
+        /** 当前 Worker 结束前追加下一段 work，避免 KEEP 把 continuation 丢掉。 */
+        fun enqueueContinuation(workManager: WorkManager) {
+            workManager.enqueueUniqueWork(
+                UNIQUE_WORK_NAME,
+                ExistingWorkPolicy.APPEND,
+                buildContinuationRequest(),
             )
         }
     }
@@ -258,6 +304,18 @@ interface PendingTranscriptionDependencies {
     val maxAttempts: Int
     val batchLimit: Int
     val clock: () -> Long
+
+    /** 单次 Worker 最多处理的段数；耗尽后安排 continuation。 */
+    val executionBudget: Int
+        get() = PendingTranscriptionWorker.DEFAULT_EXECUTION_BUDGET
+
+    /** transaction 成功后的 WAV best-effort 删除 seam；失败不得重做 transcript。 */
+    val deleteAudioFile: (PendingAudioEntity) -> Boolean
+        get() = { entity -> store.deleteFile(entity) }
+
+    /** 正常 backlog continuation；默认 seam 无动作，生产实现接 WorkManager APPEND。 */
+    val scheduleContinuation: () -> Unit
+        get() = {}
 }
 
 /**
@@ -271,8 +329,8 @@ interface PendingAudioQueue {
     /** 按 createdTs ASC、同值再 id ASC 返回所有 PENDING 段。 */
     suspend fun pendingSegments(): List<PendingAudioEntity>
 
-    /** 转写成功后持久化一个转写块；成功返回 true（失败抛异常或返回 false）。 */
-    suspend fun recordTranscript(chunk: TranscriptChunkEntity): Boolean
+    /** 在同一事务内持久化 recovery transcript 并消费 pending 行。 */
+    suspend fun recordTranscript(entity: PendingAudioEntity, chunk: TranscriptChunkEntity): Boolean
 
     /** 把一段标记为终态 FAILED（携带固定安全 error kind/code，不含路径/原文）。 */
     suspend fun markFailed(entity: PendingAudioEntity, errorKind: String, errorCode: String?)
@@ -311,13 +369,16 @@ object PendingTranscriptionRuntime {
         val db = AppDatabase.get(appContext)
         val pendingDao = db.pendingAudioDao()
         return DefaultDependencies(
-            queue = RoomPendingAudioQueue(pendingDao, db.transcriptDao()),
+            queue = RoomPendingAudioQueue(pendingDao, db.transcriptDao(), db),
             store = PendingAudioStore(
                 rootDir = File(appContext.noBackupFilesDir, "pending-audio"),
                 dao = pendingDao,
             ),
             transcriber = transcriberOverride?.invoke(appContext)
                 ?: RuntimePendingSegmentTranscriber(appContext),
+            scheduleContinuation = {
+                PendingTranscriptionWorker.enqueueContinuation(WorkManager.getInstance(appContext))
+            },
         )
     }
 
@@ -372,6 +433,8 @@ class DefaultDependencies(
     override val maxAttempts: Int = PendingTranscriptionWorker.DEFAULT_MAX_ATTEMPTS,
     override val batchLimit: Int = PendingTranscriptionWorker.DEFAULT_BATCH_LIMIT,
     override val clock: () -> Long = System::currentTimeMillis,
+    override val executionBudget: Int = PendingTranscriptionWorker.DEFAULT_EXECUTION_BUDGET,
+    override val scheduleContinuation: () -> Unit = {},
 ) : PendingTranscriptionDependencies
 
 /**
@@ -384,16 +447,36 @@ class DefaultDependencies(
 class RoomPendingAudioQueue(
     private val pendingDao: PendingAudioDao,
     private val transcriptDao: TranscriptDao,
+    private val database: AppDatabase? = null,
 ) : PendingAudioQueue {
 
     /** 按 createdTs ASC、同值再 id ASC 返回所有 PENDING 段。 */
     override suspend fun pendingSegments(): List<PendingAudioEntity> =
         pendingDao.getByState("PENDING").sortedWith(compareBy<PendingAudioEntity> { it.createdTs }.thenBy { it.id })
 
-    /** 转写成功：分配课程内下一 seq 后写入；异常原样上抛（不吞成成功）。 */
-    override suspend fun recordTranscript(chunk: TranscriptChunkEntity): Boolean {
-        val nextSeq = transcriptDao.maxSeq(chunk.courseId) + 1
-        transcriptDao.insert(chunk.copy(seq = nextSeq))
+    /**
+     * 转写成功：在一个 Room transaction 内幂等写 transcript 并消费 pending 行。
+     * recoveryKey 已存在时只补偿 pending 删除，不再次 insert；任一步失败由 Room 回滚。
+     */
+    override suspend fun recordTranscript(
+        entity: PendingAudioEntity,
+        chunk: TranscriptChunkEntity,
+    ): Boolean {
+        val db = requireNotNull(database) { "ROOM_DATABASE_REQUIRED_FOR_ATOMIC_RECOVERY" }
+        db.withTransaction {
+            val key = requireNotNull(chunk.recoveryKey) { "RECOVERY_KEY_REQUIRED" }
+            val existing = transcriptDao.findRecoveryId(chunk.courseId, key)
+            if (existing == null) {
+                val nextSeq = transcriptDao.maxSeq(chunk.courseId) + 1
+                transcriptDao.insert(chunk.copy(seq = nextSeq))
+                if (pendingDao.deleteById(entity.id) == 0) {
+                    error("PENDING_CONSUME_FAILED")
+                }
+            } else {
+                // 上一次 transaction 已提交 transcript；这里只需完成可能遗漏的行消费。
+                pendingDao.deleteById(entity.id)
+            }
+        }
         return true
     }
 

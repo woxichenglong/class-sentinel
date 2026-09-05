@@ -71,6 +71,8 @@ class PendingAudioStore(
                 segmentId = segment.id,
                 filePath = target.absolutePath,
                 durationMs = (segment.endOffsetMs - segment.startOffsetMs).coerceAtLeast(0L),
+                startOffsetMs = segment.startOffsetMs,
+                endOffsetMs = segment.endOffsetMs,
                 state = state,
                 attempts = 0,
                 lastError = lastError,

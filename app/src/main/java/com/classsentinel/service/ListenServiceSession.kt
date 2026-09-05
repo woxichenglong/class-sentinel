@@ -6,14 +6,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 会话生命周期协调器（Task 9；纯 Kotlin/coroutines，无 Android/Room 依赖）。
  *
  * - [start] 幂等：在途 start 协程期间重复调用共享同一个 [Job]，只创建一次 handle、
- *   只调用一次 handle.start()；已创建的 handle 在本次 start 完成后保留，供后续 start 复用。
+ *   只调用一次 handle.start()；成功 stop 后丢弃 handle，下一次 start 重新创建。
  *   发布（发布 startJob 引用）后才启动协程，且不在持锁状态下执行任何用户 suspend 代码。
- * - [stop] 在 [scope] 中异步执行：优先取消并等待在途 start 协程，否则停止当前 handle；
+ * - [stop] 在 [scope] 中异步执行：优先取消并等待在途 start 协程，再停止当前 handle；
+ *   不同 stop 调用用 mutex 串行化真正的 handle.stop()，每个调用仍独立执行 stopSelfResult。
  *   无论 stop 成功、抛异常还是被取消，都在 finally 中调用 [stopSelfResult]，异常原样传播。
  */
 internal class ListenServiceSession(
@@ -25,16 +28,19 @@ internal class ListenServiceSession(
 
     private val lock = Any()
 
-    /** 最近一次创建的 handle；start 完成后保留，供后续 start 复用（仅在锁内读写）。 */
+    /** 当前会话 handle；成功 stop 后清空（仅在锁内读写）。 */
     private var handle: ListenSessionHandle? = null
 
     /** 在途 start 协程 Job；完成时（身份校验后）清除（仅在锁内读写）。 */
     private var startJob: Job? = null
 
-    /** 幂等启动：在途 start 协程活跃时共享返回同一 Job；否则新建 Job 并复用已建 handle。 */
+    /** 串行化真正的 handle.stop()，防止不同 stop 调用重复释放同一资源。 */
+    private val handleStopMutex = Mutex()
+
+    /** 幂等启动：取消但未完成的 start 仍视为在途；否则新建 Job。 */
     fun start(): Job {
         val job = synchronized(lock) {
-            startJob?.takeIf { it.isActive }?.let { return it }
+            startJob?.takeIf { !it.isCompleted }?.let { return it }
             var self: Job? = null
             val newJob = scope.launch(start = CoroutineStart.LAZY) {
                 try {
@@ -63,17 +69,34 @@ internal class ListenServiceSession(
         return job
     }
 
-    /** 异步停止：优先取消/等待在途 start，否则停止 handle；随后总是调用 stopSelfResult。 */
-    fun stop(startId: Int): Job = scope.launch {
-        val inFlight = synchronized(lock) { startJob?.takeIf { !it.isCompleted } }
-        try {
-            if (inFlight != null) {
-                inFlight.cancelAndJoin()
-            } else {
-                synchronized(lock) { handle }?.stop()
+    /**
+     * 异步停止：优先取消/等待在途 start，再重新读取 handle 并停止它。
+     *
+     * 重新读取是关键：底层 start 可能在取消请求后仍非协作式地进入 Running；
+     * 只等待 start Job 会把已经打开的 AudioRecord/native 资源遗留在外层。
+     */
+    fun stop(startId: Int): Job {
+        return scope.launch {
+            try {
+                val inFlight = synchronized(lock) { startJob?.takeIf { !it.isCompleted } }
+                if (inFlight != null) {
+                    inFlight.cancelAndJoin()
+                }
+
+                handleStopMutex.withLock {
+                    val current = synchronized(lock) { handle }
+                    if (current != null) {
+                        // 不把“协程已取消”当作 native 资源已释放；必须进入下层 stop。
+                        if (current.stop()) {
+                            synchronized(lock) {
+                                if (handle === current) handle = null
+                            }
+                        }
+                    }
+                }
+            } finally {
+                stopSelfResult(startId)
             }
-        } finally {
-            stopSelfResult(startId)
         }
     }
 }

@@ -12,7 +12,8 @@ import com.classsentinel.data.entities.TranscriptChunkEntity
 
 /**
  * 应用数据库：课程 / 课堂事件 / 转写块 / 待上传音频段。
- * version 1 首次发布；version 2 新增 pending_audio_segments 表；version 3 新增学习产物表。
+ * version 1 首次发布；version 2 新增 pending_audio_segments 表；version 3 新增学习产物表；
+ * version 4 为 recovery transcript 增加只针对恢复路径的幂等键；version 5 保存 pending 原始 offset。
  * exportSchema=true，导出 Room schema。
  */
 @Database(
@@ -23,7 +24,7 @@ import com.classsentinel.data.entities.TranscriptChunkEntity
         PendingAudioEntity::class,
         StudyArtifactEntity::class,
     ],
-    version = 3,
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -49,7 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "class_sentinel.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
             }
     }
 }

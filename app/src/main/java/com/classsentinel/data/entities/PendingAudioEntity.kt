@@ -14,6 +14,10 @@ data class PendingAudioEntity(
     val segmentId: String,
     val filePath: String,
     val durationMs: Long,
+    /** 原始课堂音频起点；恢复时不得丢失。 */
+    val startOffsetMs: Long = 0L,
+    /** 原始课堂音频终点；v4 旧行由 migration 从 durationMs 补齐。 */
+    val endOffsetMs: Long = 0L,
     val state: String = "PENDING",
     val attempts: Int = 0,
     val lastError: String? = null,

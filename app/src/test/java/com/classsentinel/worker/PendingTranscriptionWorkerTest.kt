@@ -113,6 +113,12 @@ class PendingTranscriptionWorkerTest {
             deleted += segment
             inserted.removeAll { it.id == segment.id }
         }
+        override suspend fun deleteById(id: Long): Int {
+            if (failDelete) throw IOException("db delete failed (synthetic)")
+            val before = inserted.size
+            inserted.removeAll { it.id == id }
+            return if (before == inserted.size) 0 else 1
+        }
         override suspend fun deleteForCourse(courseId: Long) {
             inserted.removeAll { it.courseId == courseId }
         }
@@ -131,18 +137,24 @@ class PendingTranscriptionWorkerTest {
         val failed = mutableListOf<Pair<Long, String>>()
         val attemptFailures = mutableListOf<Pair<Long, String>>()
         val deleted = mutableListOf<Long>()
+        val consumed = mutableListOf<Long>()
         var failTranscriptCount = 0
         var failDelete = false
 
         override suspend fun pendingSegments(): List<PendingAudioEntity> =
             pending.sortedWith(compareBy<PendingAudioEntity> { it.createdTs }.thenBy { it.id })
 
-        override suspend fun recordTranscript(chunk: TranscriptChunkEntity): Boolean {
+        override suspend fun recordTranscript(
+            entity: PendingAudioEntity,
+            chunk: TranscriptChunkEntity,
+        ): Boolean {
             if (failTranscriptCount > 0) {
                 failTranscriptCount--
                 return false
             }
             transcripts += chunk
+            consumed += entity.id
+            pending.removeAll { it.id == entity.id }
             return true
         }
 
@@ -175,6 +187,7 @@ class PendingTranscriptionWorkerTest {
     /** 最小 TranscriptDao fake：仅当真正实现 RoomPendingAudioQueue 时构造需要；本测试只用于编译。 */
     private class FakeTranscriptDao : TranscriptDao {
         override suspend fun insert(chunk: TranscriptChunkEntity): Long = 1L
+        override suspend fun findRecoveryId(courseId: Long, recoveryKey: String): Long? = null
         override suspend fun getForCourse(courseId: Long): List<TranscriptChunkEntity> = emptyList()
         override fun observeForCourse(courseId: Long): Flow<List<TranscriptChunkEntity>> = emptyFlow()
         override fun observeMarkedForCourse(courseId: Long): Flow<List<TranscriptChunkEntity>> = emptyFlow()
@@ -261,8 +274,13 @@ class PendingTranscriptionWorkerTest {
         return entity
     }
 
-    private suspend fun saveReal(segmentId: String, createdTs: Long): PendingAudioEntity {
-        val seg = WavSegment(segmentId, 0L, 1000L, wavBytes())
+    private suspend fun saveReal(
+        segmentId: String,
+        createdTs: Long,
+        startOffsetMs: Long = 0L,
+        endOffsetMs: Long = 1000L,
+    ): PendingAudioEntity {
+        val seg = WavSegment(segmentId, startOffsetMs, endOffsetMs, wavBytes())
         return store.save(1L, seg).also { queue.pending += it }
     }
 
@@ -273,6 +291,9 @@ class PendingTranscriptionWorkerTest {
         maxAttempts: Int = 3,
         batchLimit: Int = 10,
         clock: () -> Long = { now },
+        executionBudget: Int = PendingTranscriptionWorker.DEFAULT_EXECUTION_BUDGET,
+        deleteAudioFile: ((PendingAudioEntity) -> Boolean)? = null,
+        scheduleContinuation: () -> Unit = {},
     ): PendingTranscriptionDependencies = object : PendingTranscriptionDependencies {
         override val queue = queue
         override val store = store
@@ -280,6 +301,9 @@ class PendingTranscriptionWorkerTest {
         override val maxAttempts = maxAttempts
         override val batchLimit = batchLimit
         override val clock = clock
+        override val executionBudget = executionBudget
+        override val deleteAudioFile = deleteAudioFile ?: { entity -> store.deleteFile(entity) }
+        override val scheduleContinuation = scheduleContinuation
     }
 
     private fun worker(deps: PendingTranscriptionDependencies): PendingTranscriptionWorker {
@@ -339,10 +363,22 @@ class PendingTranscriptionWorkerTest {
         assertEquals(ListenableWorker.Result.success(), result)
         // 严格按 createdTs ASC 顺序转写，前段不会重复
         assertEquals(listOf("a", "b"), transcriber.calls)
-        // sink 先于删除：两条都先写入 transcript，再各删除一次
+        // 每条都在 queue 的原子 consume 中提交 transcript + pending 行消费
         assertEquals(listOf("a", "b"), queue.transcripts.map { it.segmentId })
-        assertEquals(listOf(e1.id, e2.id), dao.deleted.map { it.id })
+        assertEquals(listOf(e1.id, e2.id), queue.consumed)
         assertEquals(listOf("alpha", "beta"), queue.transcripts.map { it.text })
+    }
+
+    @Test
+    fun `recovery worker carries saved classroom offsets into transcript`() = runBlocking {
+        saveReal("old", createdTs = 100L, startOffsetMs = 600_000L, endOffsetMs = 601_000L)
+        transcriber.textBySegment["old"] = "old classroom sentence"
+
+        assertEquals(ListenableWorker.Result.success(), runWorker(deps()))
+
+        val recovered = queue.transcripts.single()
+        assertEquals(600_000L, recovered.startOffsetMs)
+        assertEquals(601_000L, recovered.endOffsetMs)
     }
 
     @Test
@@ -460,24 +496,76 @@ class PendingTranscriptionWorkerTest {
     }
 
     @Test
-    fun `delete failure keeps pending and retries`() = runBlocking {
+    fun `wav delete failure is best effort and does not retry committed transcript`() = runBlocking {
         val e1 = saveReal("a", createdTs = 100L)
         transcriber.textBySegment["a"] = "alpha"
-        dao.failDelete = true
 
-        val result = runWorker(deps())
+        val result = runWorker(deps(deleteAudioFile = { false }))
 
-        assertEquals(ListenableWorker.Result.retry(), result)
-        // 数据保留契约：DAO 删除失败时音频文件必须仍存在。若文件先被删而 DB 行保留 PENDING，
-        // 下一次 Worker 重试只能 load 成 Missing → 终态 STORAGE 失败，音频丢失（Task 16 数据丢失缺陷）。
-        // 当前生产 store.delete 顺序是 file.delete() → dao.delete(entity)，违反该契约 → 本用例 RED。
+        assertEquals(ListenableWorker.Result.success(), result)
+        // DB transaction 已消费 pending；WAV 删除失败只留下可后续清理的文件，不触发重转写。
         val file = File(e1.filePath)
-        assertTrue("audio file must survive a failed DAO delete (data retention contract)", file.exists())
-        // DB 行仍保留（PENDING、attempts 未递增）
-        val row = dao.inserted.first { it.id == e1.id }
-        assertEquals("PENDING", row.state)
-        assertEquals(0, row.attempts)
+        assertTrue("audio file may remain for later cleanup", file.exists())
         assertEquals(listOf("alpha"), queue.transcripts.map { it.text })
+        assertEquals(listOf(e1.id), queue.consumed)
+    }
+
+    @Test
+    fun `retry after transcript commit and pending delete failure does not duplicate recovery transcript`() = runBlocking {
+        saveReal("a", createdTs = 100L)
+        transcriber.textBySegment["a"] = "alpha"
+        // 事务失败时 fake queue 不提交 transcript 或 pending consume；下一次才允许成功一次。
+        queue.failTranscriptCount = 1
+
+        assertEquals(ListenableWorker.Result.retry(), runWorker(deps()))
+        assertEquals(0, queue.transcripts.size)
+
+        assertEquals(ListenableWorker.Result.success(), runWorker(deps()))
+
+        // 即使 Worker 重跑，同一 pending segment 最多产生一条 recovery transcript。
+        assertEquals(listOf("a", "a"), transcriber.calls)
+        assertEquals(1, queue.transcripts.size)
+        assertEquals("alpha", queue.transcripts.single().text)
+        assertEquals(1, queue.consumed.size)
+    }
+
+    @Test
+    fun `one worker continues normal backlog past batch limit without retry`() = runBlocking {
+        repeat(15) { index ->
+            saveReal("s$index", createdTs = index.toLong())
+            transcriber.textBySegment["s$index"] = "text-$index"
+        }
+
+        val result = runWorker(deps(batchLimit = 10))
+
+        // 正常 backlog continuation 是同一次有界批循环的 success，不得借 Result.retry() 走指数退避。
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals(15, transcriber.calls.size)
+        assertEquals(15, queue.transcripts.size)
+        assertEquals(15, queue.consumed.size)
+    }
+
+    @Test
+    fun `budget exhaustion schedules continuation without retry`() = runBlocking {
+        repeat(15) { index ->
+            saveReal("budget$index", createdTs = index.toLong())
+            transcriber.textBySegment["budget$index"] = "text-$index"
+        }
+        var continuationCount = 0
+
+        val result = runWorker(
+            deps(
+                batchLimit = 10,
+                executionBudget = 10,
+                scheduleContinuation = { continuationCount++ },
+            ),
+        )
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals("normal budget continuation must not use retry", 0, continuationCount - 1)
+        assertEquals(1, continuationCount)
+        assertEquals(10, queue.consumed.size)
+        assertEquals(5, queue.pending.size)
     }
 
     @Test

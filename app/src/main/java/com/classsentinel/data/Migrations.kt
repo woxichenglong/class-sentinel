@@ -61,3 +61,23 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         )
     }
 }
+
+/** v3 → v4：恢复 transcript 使用 nullable 幂等键；NULL live 行可重复且不受约束。 */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE transcript_chunks ADD COLUMN recoveryKey TEXT")
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_transcript_chunks_courseId_recoveryKey " +
+                "ON transcript_chunks(courseId, recoveryKey)",
+        )
+    }
+}
+
+/** v4 → v5：失败段保存原始课堂 offset；旧行用 durationMs 恢复 endOffsetMs。 */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE pending_audio_segments ADD COLUMN startOffsetMs INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE pending_audio_segments ADD COLUMN endOffsetMs INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE pending_audio_segments SET endOffsetMs = durationMs WHERE endOffsetMs = 0")
+    }
+}
