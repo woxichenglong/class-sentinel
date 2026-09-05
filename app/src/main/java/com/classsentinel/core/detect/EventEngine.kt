@@ -24,6 +24,7 @@ data class ClassEvent(
 class EventEngine(
     private val nameMatcher: NameMatcher,
     private val sensitivityFlow: StateFlow<Sensitivity>,
+    private val questionTargetMatcher: QuestionTargetMatcher = QuestionTargetMatcher(nameMatcher),
 ) {
     private var confirmedRollcallTs = 0L
     private var lastDirectQuestion: LastQuestion? = null
@@ -119,7 +120,7 @@ class EventEngine(
         // the persisted event/answer, not evidence that an old name targets this new sentence.
         val question = QuestionDetector.detectAnswerable(final.text, sens.questionWordLevel)
         val nameHit = nameMatcher.detect(final.text, sens)
-        val exactNameHit = nameMatcher.detectExactConfiguredName(final.text)
+        val targetedNameHit = questionTargetMatcher.detect(final.text)
 
         // A confirming final commits the provisional alert to the authoritative suppression clock.
         // A rewritten final without a name does not, so a false partial cannot suppress later calls.
@@ -127,8 +128,9 @@ class EventEngine(
             confirmedRollcallTs = ts
         }
 
-        // 明确问当前学生：姓名命中会把开放题提升为 DIRECT；高置信度“你”由 detector 自己识别。
-        if (question != null && (question.scope == EventScope.DIRECT || nameHit != null || exactNameHit != null)) {
+        // Explicit direct markers are authoritative; a class-open question needs a separate
+        // vocative target match, never a mere ASR/name mention.
+        if (question != null && (question.scope == EventScope.DIRECT || targetedNameHit != null)) {
             if (canEmitQuestion(EventScope.DIRECT, final.text, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,

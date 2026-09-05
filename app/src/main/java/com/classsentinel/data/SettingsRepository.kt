@@ -660,7 +660,14 @@ object Channels {
 internal fun encodeNameList(names: List<NameEntry>): String {
     val arr = JSONArray()
     names.forEach { n ->
-        arr.put(JSONObject().put("display", n.display).put("variants", JSONArray(n.variants)))
+        arr.put(
+            JSONObject()
+                .put("display", n.display)
+                .put("aliases", JSONArray(n.aliases))
+                .put("asrVariants", JSONArray(n.asrVariants))
+                // Keep the legacy field for older app versions; it contains ASR-only variants.
+                .put("variants", JSONArray(n.asrVariants)),
+        )
     }
     return arr.toString()
 }
@@ -672,11 +679,17 @@ internal fun decodeNameList(json: String?): List<NameEntry> {
         buildList {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
-                val variants = o.optJSONArray("variants") ?: JSONArray()
+                val aliases = o.optJSONArray("aliases")?.let { array ->
+                    List(array.length()) { j -> array.optString(j) }
+                } ?: emptyList()
+                val asrVariants = (o.optJSONArray("asrVariants") ?: o.optJSONArray("variants"))?.let { array ->
+                    List(array.length()) { j -> array.optString(j) }
+                } ?: emptyList()
                 add(
                     NameEntry(
                         display = o.optString("display"),
-                        variants = List(variants.length()) { j -> variants.optString(j) },
+                        aliases = aliases,
+                        asrVariants = asrVariants,
                     ),
                 )
             }

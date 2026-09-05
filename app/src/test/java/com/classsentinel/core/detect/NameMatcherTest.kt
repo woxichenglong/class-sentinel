@@ -10,7 +10,13 @@ import org.json.JSONArray
 
 class NameMatcherTest {
 
-    private val names = listOf(NameEntry("张伟", listOf("zhang wei", "张微", "张威")))
+    private val names = listOf(
+        NameEntry(
+            display = "张伟",
+            aliases = listOf("小伟"),
+            asrVariants = listOf("zhang wei", "张微", "张威"),
+        ),
+    )
 
     @Test
     fun `exact name with context hits`() {
@@ -70,14 +76,21 @@ class NameMatcherTest {
     }
 
     @Test
-    fun `configured exact name can be detected without rollcall context`() {
-        val matcher = NameMatcher(names)
+    fun `configured display name can be detected as a question target`() {
+        val matcher = QuestionTargetMatcher(names)
 
-        val hit = matcher.detectExactConfiguredName("张伟，为什么 CAPM 成立")
+        val hit = matcher.detect("张伟，为什么 CAPM 成立")
 
         assertEquals("张伟", hit?.name)
         assertEquals("张伟", hit?.matched)
-        assertTrue(hit?.isExact == true)
+    }
+
+    @Test
+    fun `explicit spoken alias can be detected as a question target`() {
+        val hit = QuestionTargetMatcher(names).detect("小伟，为什么 CAPM 成立")
+
+        assertEquals("张伟", hit?.name)
+        assertEquals("小伟", hit?.matched)
     }
 
     @Test

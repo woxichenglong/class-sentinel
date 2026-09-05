@@ -65,7 +65,8 @@ private fun StepName(onNext: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var display by remember { mutableStateOf("") }
-    var variants by remember { mutableStateOf("") }
+    var aliases by remember { mutableStateOf("") }
+    var asrVariants by remember { mutableStateOf("") }
 
     Text("你的名字（老师点名用的）", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
@@ -77,19 +78,36 @@ private fun StepName(onNext: () -> Unit) {
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
-        value = variants,
-        onValueChange = { variants = it },
-        label = { Text("变体（逗号分隔：同音字/昵称/拼音）") },
+        value = aliases,
+        onValueChange = { aliases = it },
+        label = { Text("可称呼昵称（逗号分隔）") },
+        placeholder = { Text("例：小伟") },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = asrVariants,
+        onValueChange = { asrVariants = it },
+        label = { Text("ASR 变体（仅识别容错，逗号分隔）") },
         placeholder = { Text("例：张微, 张威, zhang wei") },
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(24.dp))
     Button(
         onClick = {
-            val v = variants.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
+            val a = aliases.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
+            val v = asrVariants.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
             scope.launch {
                 SettingsRepositoryHolder.get(context)
-                    .saveNameList(listOf(NameEntry(display.trim(), v)))
+                    .saveNameList(
+                        listOf(
+                            NameEntry(
+                                display = display.trim(),
+                                aliases = a,
+                                asrVariants = v,
+                            ),
+                        ),
+                    )
                 onNext()
             }
         },

@@ -1,7 +1,21 @@
 package com.classsentinel.core.detect
 
-/** 名字条目：主名 + 变体（昵称/拼音/易混同音字，如 张伟/zhang wei/张微/张威） */
-data class NameEntry(val display: String, val variants: List<String>)
+/**
+ * 名字条目：展示姓名、可直接称呼的昵称、以及只用于 ASR 容错的变体。
+ * 旧的两参数构造会把历史 variants 保守地归入 asrVariants，不让同音字冒充呼语。
+ */
+data class NameEntry(
+    val display: String,
+    val aliases: List<String>,
+    val asrVariants: List<String>,
+) {
+    /** Backward-compatible constructor for the legacy mixed `variants` field. */
+    constructor(display: String, variants: List<String>) : this(
+        display = display,
+        aliases = emptyList(),
+        asrVariants = variants,
+    )
+}
 
 /**
  * 点名检测：名字表 × 精确包含/滑窗模糊 × 上下文确认词 × 排除词。
@@ -38,7 +52,7 @@ class NameMatcher private constructor(
 
         var best: Hit? = null
         for (entry in names) {
-            for (v in entry.variants + entry.display) {
+            for (v in entry.aliases + entry.asrVariants + entry.display) {
                 if (v.isEmpty()) continue
                 // 精确包含：最强命中，立即返回（过上下文门槛）
                 if (segment.contains(v)) {
@@ -62,20 +76,8 @@ class NameMatcher private constructor(
         return best?.let { contextGate(segment, it, sensitivity) }
     }
 
-    /** Exact configured-name evidence for an already-recognized question; no rollcall context gate. */
-    fun detectExactConfiguredName(segment: String): Hit? {
-        if (segment.length < 2 || namesProvider().isEmpty()) return null
-        if (excludeWords.any { segment.contains(it) }) return null
-
-        for (entry in namesProvider()) {
-            for (variant in entry.variants + entry.display) {
-                if (variant.isEmpty() || !segment.contains(variant)) continue
-                if (variant.length == 1 && !isCallBoundary(segment, variant)) continue
-                return Hit(entry.display, variant, 1.0, isExact = true)
-            }
-        }
-        return null
-    }
+    /** Current configured entries for the independent question-targeting seam. */
+    internal fun configuredNames(): List<NameEntry> = namesProvider()
 
     private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity): Hit? {
         if (sensitivity.contextRequired && contextWords.none { segment.contains(it) }) return null

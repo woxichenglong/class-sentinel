@@ -187,6 +187,29 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `名字表 JSON 区分可称呼昵称与 ASR 变体并兼容旧 variants`() {
+        val names = listOf(
+            NameEntry(
+                display = "张伟",
+                aliases = listOf("小伟"),
+                asrVariants = listOf("张微"),
+            ),
+        )
+
+        assertEquals(names, decodeNameList(encodeNameList(names)))
+        assertEquals(
+            listOf(
+                NameEntry(
+                    display = "张伟",
+                    aliases = emptyList(),
+                    asrVariants = listOf("张微"),
+                ),
+            ),
+            decodeNameList("[{\"display\":\"张伟\",\"variants\":[\"张微\"]}]"),
+        )
+    }
+
+    @Test
     fun `灵敏度 JSON 编解码与档位自定义覆盖`() = runBlocking {
         assertEquals(Sensitivity.STANDARD, decodeSensitivity(encodeSensitivity(Sensitivity.STANDARD)))
         assertEquals(Sensitivity.STRICT, decodeSensitivity(encodeSensitivity(Sensitivity.STRICT)))

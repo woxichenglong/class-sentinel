@@ -161,6 +161,42 @@ class EventEngineTest {
     }
 
     @Test
+    fun `asr homophone variant alone does not target direct question`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "张微，为什么 CAPM 成立", 0L, 1_000L),
+            ts = 1_000,
+        )
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.CLASS_OPEN, event?.scope)
+    }
+
+    @Test
+    fun `short display name embedded in longer spoken name does not target direct question`() {
+        val event = EventEngine(
+            NameMatcher(listOf(NameEntry("王明", emptyList()))),
+            MutableStateFlow(Sensitivity.STANDARD),
+        ).processFinal(
+            FinalTranscript(1, "王明哲，为什么这样做", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.CLASS_OPEN, event?.scope)
+    }
+
+    @Test
+    fun `mentioned name in answer discussion does not target direct question`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "为什么张伟刚才的答案不对", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.CLASS_OPEN, event?.scope)
+    }
+
+    @Test
     fun `sensitivity hot update takes effect`() {
         val flow = MutableStateFlow<Sensitivity>(Sensitivity.STRICT)
         val eng = EventEngine(NameMatcher(listOf(NameEntry("张伟", emptyList()))), flow)

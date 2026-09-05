@@ -97,7 +97,8 @@ fun SettingsScreen() {
     }
 
     var draftName by rememberSaveable { mutableStateOf("") }
-    var draftVariants by rememberSaveable { mutableStateOf("") }
+    var draftAliases by rememberSaveable { mutableStateOf("") }
+    var draftAsrVariants by rememberSaveable { mutableStateOf("") }
     var showClearDialog by rememberSaveable { mutableStateOf(false) }
     var clearMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -130,7 +131,12 @@ fun SettingsScreen() {
                         Column(Modifier.weight(1f)) {
                             Text(entry.display, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                "变体：${entry.variants.joinToString("、").ifBlank { "无" }}",
+                                "可称呼昵称：${entry.aliases.joinToString("、").ifBlank { "无" }}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                "ASR 变体：${entry.asrVariants.joinToString("、").ifBlank { "无" }}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -150,19 +156,37 @@ fun SettingsScreen() {
                     )
                     Spacer(Modifier.width(8.dp))
                     OutlinedTextField(
-                        value = draftVariants,
-                        onValueChange = { draftVariants = it },
-                        label = { Text("变体") },
+                        value = draftAliases,
+                        onValueChange = { draftAliases = it },
+                        label = { Text("可称呼昵称") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = draftAsrVariants,
+                        onValueChange = { draftAsrVariants = it },
+                        label = { Text("ASR 变体") },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = {
                         val display = draftName.trim()
                         if (display.isNotBlank()) {
-                            val variants = draftVariants.split(',', '，').map(String::trim).filter(String::isNotBlank)
-                            saveSnap { repo.saveNameList(names + NameEntry(display, variants)) }
+                            val aliases = draftAliases.split(',', '，').map(String::trim).filter(String::isNotBlank)
+                            val asrVariants = draftAsrVariants.split(',', '，').map(String::trim).filter(String::isNotBlank)
+                            saveSnap {
+                                repo.saveNameList(
+                                    names + NameEntry(
+                                        display = display,
+                                        aliases = aliases,
+                                        asrVariants = asrVariants,
+                                    ),
+                                )
+                            }
                             draftName = ""
-                            draftVariants = ""
+                            draftAliases = ""
+                            draftAsrVariants = ""
                         }
                     }) { Icon(Icons.Filled.Add, contentDescription = "添加姓名") }
                 }
