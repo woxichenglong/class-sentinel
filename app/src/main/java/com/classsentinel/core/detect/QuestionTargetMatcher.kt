@@ -20,7 +20,6 @@ class QuestionTargetMatcher private constructor(
     fun detect(segment: String): Hit? {
         val names = namesProvider()
         if (segment.length < 2 || names.isEmpty()) return null
-        if (EXCLUDE_WORDS.any { segment.contains(it) }) return null
 
         for (entry in names) {
             val candidates = (listOf(entry.display) + entry.aliases)
@@ -37,7 +36,8 @@ class QuestionTargetMatcher private constructor(
                             0,
                             candidate.length,
                             ignoreCase = true,
-                        ) && isVocativeOccurrence(segment, start, start + candidate.length)
+                        ) && !NameMatchRules.isExcludedOccurrence(segment, start + candidate.length) &&
+                        isVocativeOccurrence(segment, start, start + candidate.length)
                     ) {
                         return Hit(entry.display, candidate)
                     }
@@ -70,17 +70,13 @@ class QuestionTargetMatcher private constructor(
         val previous = segment[start - 1]
         if (!previous.isLetterOrDigit()) return true
 
-        // Allow explicit request verbs immediately before the name, e.g. 请张伟/让张伟回答.
+        // Chinese request prefixes may be attached to narrative words, e.g. 老师请张伟/那我们让张伟.
         val prefix = segment.substring(0, start).trimEnd()
-        return TARGET_PREFIXES.any { token ->
-            prefix.endsWith(token) &&
-                (prefix.length == token.length || !prefix[prefix.length - token.length - 1].isLetterOrDigit())
-        }
+        return TARGET_PREFIXES.any { prefix.endsWith(it) }
     }
 
     private companion object {
-        val EXCLUDE_WORDS = listOf("没来", "请假", "没到", "不在")
-        val TARGET_PREFIXES = listOf("请", "让", "叫")
+        val TARGET_PREFIXES = listOf("邀请", "有请", "请", "让", "叫")
         val DIRECT_CONTINUATIONS = listOf(
             "你",
             "您",

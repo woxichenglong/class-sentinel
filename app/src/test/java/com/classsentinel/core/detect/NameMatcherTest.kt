@@ -38,6 +38,20 @@ class NameMatcherTest {
     }
 
     @Test
+    fun `absence of another student does not suppress a later rollcall`() {
+        val matcher = NameMatcher(
+            listOf(
+                NameEntry("小李", emptyList()),
+                NameEntry("张伟", emptyList()),
+            ),
+        )
+
+        val hit = matcher.detect("小李今天没来，张伟你来回答", Sensitivity.STANDARD)
+
+        assertEquals("张伟", hit?.name)
+    }
+
+    @Test
     fun `name without context rejected when required`() {
         assertNull(NameMatcher(names).detect("张伟同学上次作业不错", Sensitivity.STANDARD))
     }

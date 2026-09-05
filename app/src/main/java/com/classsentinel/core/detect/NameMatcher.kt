@@ -43,27 +43,30 @@ class NameMatcher private constructor(
     private val contextWords =
         listOf("来", "回答", "在不在", "在吗", "起立", "上来", "说说", "讲一下", "发言")
 
-    private val excludeWords = listOf("没来", "请假", "没到", "不在")
 
     fun detect(segment: String, sensitivity: Sensitivity): Hit? {
         val names = namesProvider()
         if (segment.length < 2 || names.isEmpty()) return null
-        if (excludeWords.any { segment.contains(it) }) return null
 
         var best: Hit? = null
         for (entry in names) {
             for (v in entry.aliases + entry.asrVariants + entry.display) {
                 if (v.isEmpty()) continue
-                // 精确包含：最强命中，立即返回（过上下文门槛）
-                if (segment.contains(v)) {
-                    val hit = Hit(entry.display, v, 1.0, isExact = true)
-                    contextGate(segment, hit, sensitivity)?.let { return it }
-                    continue
+                // 精确包含：逐 occurrence 检查，避免其他人的「没来/请假」污染此姓名。
+                var exactStart = segment.indexOf(v)
+                while (exactStart >= 0) {
+                    val exactEnd = exactStart + v.length
+                    if (!NameMatchRules.isExcludedOccurrence(segment, exactEnd)) {
+                        val hit = Hit(entry.display, v, 1.0, isExact = true)
+                        contextGate(segment, hit, sensitivity, exactStart)?.let { return it }
+                    }
+                    exactStart = segment.indexOf(v, exactStart + 1)
                 }
                 // 滑窗模糊：按变体长度滑窗算拼音相似度
                 val window = v.length.coerceAtLeast(2)
                 if (segment.length >= window) {
                     for (start in 0..segment.length - window) {
+                        if (NameMatchRules.isExcludedOccurrence(segment, start + window)) continue
                         val sub = segment.substring(start, start + window)
                         val s = PinyinFuzzy.similarity(sub, v)
                         if (s >= sensitivity.nameScoreMin && (best == null || s > best.score)) {
@@ -79,16 +82,15 @@ class NameMatcher private constructor(
     /** Current configured entries for the independent question-targeting seam. */
     internal fun configuredNames(): List<NameEntry> = namesProvider()
 
-    private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity): Hit? {
+    private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity, matchStart: Int = segment.indexOf(hit.matched)): Hit? {
         if (sensitivity.contextRequired && contextWords.none { segment.contains(it) }) return null
         // 单字符命中必须处于点名边界，否则「王国来回答/明天来回答」里的 王/明 会被误判为点名
-        if (hit.matched.length == 1 && !isCallBoundary(segment, hit.matched)) return null
+        if (hit.matched.length == 1 && !isCallBoundary(segment, hit.matched, matchStart)) return null
         return hit
     }
 
     /** 单字符命中是否处于点名边界：前置不是连续字（未被更长词嵌入），且后缀为空/空白/标点/指令词。 */
-    private fun isCallBoundary(segment: String, ch: String): Boolean {
-        val index = segment.indexOf(ch)
+    private fun isCallBoundary(segment: String, ch: String, index: Int = segment.indexOf(ch)): Boolean {
         if (index < 0) return false
         if (index > 0 && segment[index - 1].isLetterOrDigit()) return false
         val suffix = segment.substring(index + ch.length)

@@ -7,7 +7,7 @@ package com.classsentinel.core.detect
 object QuestionDetector {
 
     private val level1 = listOf("谁来回答", "哪位同学", "谁来", "回答一下", "这个问题")
-    private val level2 = level1 + listOf("说一下", "谈谈", "思考一下", "你们觉得", "怎么看", "为什么")
+    private val level2 = level1 + listOf("说一下", "说说", "谈谈", "思考一下", "你们觉得", "怎么看", "为什么")
     private val level3 = level2 + listOf("什么是", "举个例子", "对不对", "有没有同学", "讲讲", "说说看")
 
     private val directMarkers = listOf(
@@ -46,6 +46,7 @@ object QuestionDetector {
         "为什么",
         "怎么",
         "如何",
+        "说说",
         "谈谈",
         "说一下",
         "思考一下",
@@ -55,7 +56,6 @@ object QuestionDetector {
         "什么是",
         "举个例子",
         "举例",
-        "说说",
         "讲讲",
     )
 
@@ -72,6 +72,9 @@ object QuestionDetector {
         if (segment.isBlank()) return null
         if (classInviteMarkers.any { segment.contains(it) }) {
             return AnswerableQuestion(EventScope.CLASS_OPEN, "CLASS_INVITE")
+        }
+        if (answerRequestPattern.containsMatchIn(segment)) {
+            return AnswerableQuestion(EventScope.CLASS_OPEN, "ANSWER_REQUEST")
         }
         val openMarkers = openMarkers(level)
         val hasOpenMarker = openMarkers.any { segment.contains(it) }
@@ -99,6 +102,8 @@ object QuestionDetector {
         2 -> level2
         else -> level3
     }
+
+    private val answerRequestPattern = Regex("(?:请|让|叫)\\s*[^，,。！？!?]{1,12}\\s*回答")
 }
 
 data class AnswerableQuestion(

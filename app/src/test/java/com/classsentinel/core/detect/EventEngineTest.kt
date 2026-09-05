@@ -197,6 +197,66 @@ class EventEngineTest {
     }
 
     @Test
+    fun `teacher narrative before request prefix still targets direct question`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "老师请张伟解释一下为什么 CAPM 成立", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventScope.DIRECT, event?.scope)
+    }
+
+    @Test
+    fun `group phrase before let prefix still targets direct question`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "那我们让张伟回答这个问题", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventScope.DIRECT, event?.scope)
+    }
+
+    @Test
+    fun `current-state phrase before call prefix still targets direct question`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "现在叫张伟说说他的看法", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventScope.DIRECT, event?.scope)
+    }
+
+    @Test
+    fun `the targeted student being absent is not upgraded to direct`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "张伟今天没来，为什么这个结论成立", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventScope.CLASS_OPEN, event?.scope)
+    }
+
+    @Test
+    fun `another students absence does not suppress the targeted student`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "小李今天没来，张伟你解释一下为什么 CAPM 成立", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventScope.DIRECT, event?.scope)
+    }
+
+    @Test
+    fun `another students leave does not suppress an explicit request`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "李华请假了，现在请张伟回答", 0L, 1_000L),
+            ts = 1_000L,
+        )
+
+        assertEquals(EventScope.DIRECT, event?.scope)
+    }
+
+    @Test
     fun `sensitivity hot update takes effect`() {
         val flow = MutableStateFlow<Sensitivity>(Sensitivity.STRICT)
         val eng = EventEngine(NameMatcher(listOf(NameEntry("张伟", emptyList()))), flow)

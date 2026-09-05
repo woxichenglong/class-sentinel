@@ -11,8 +11,8 @@
 
 | 检查 | 命令/依据 | 结果 |
 |---|---|---|
-| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 90 个测试类、489 个用例；失败 0、错误 0、跳过 0 |
-| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，223,657,379 bytes；SHA-256：`62829613fada8e91f204f7a9942376256cafa338486c746931d36817efba1137` |
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 90 个测试类、498 个用例；失败 0、错误 0、跳过 0 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，223,657,379 bytes；SHA-256：`60b0e94dca66cb7028e0a96487c1d13f565ea4cd0a652f96718f22d0c0d5ddd7` |
 | 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 16 个，消费者 key 16 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
@@ -34,6 +34,7 @@
 - 点名提醒支持 Partial exact-name fast path：仅文本精确命中且 `score=1.0` 的姓名会立即提醒；Partial 不落库、不触发 QUESTION/LLM，同一 utterance 的 Final 仍负责权威落库并抑制重复提醒；provisional 不推进确认抑制时钟。
 - Quick Settings Tile 与 Home 共用本地模型 readiness preflight；云 ASR key 不参与 live 启动资格，模型未准备成功前不会发 START。问题 suppression 只抑制同 scope 的相同 normalized fingerprint。
 - 点名名单将展示姓名、可直接称呼的昵称和仅用于 ASR 容错的变体分层保存；DIRECT 提问只接受前两者，并要求句首/呼语边界及定向续接词，避免把同音字、嵌入长姓名或普通姓名提及当成对当前学生发问。普通 ROLLCALL 仍可使用 ASR 变体；提问检测和滚动课堂上下文均有代码路径和 JVM 测试，实时提醒当前只保留振动与系统通知。
+- DIRECT target 的中文请求前缀允许自然叙述词连接（如“老师请/我们让/现在叫”）；缺席词只对紧邻的姓名 occurrence 生效，其他同句同学的“没来/请假”不会污染当前 target。明确的“请/让/叫 + … + 回答”请求和标准级“说说”均进入 answerable question 检测。
 
 ### 会话生命周期、通知与界面状态
 
@@ -96,7 +97,7 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 
 | 分组 | 已接入行为 |
 |---|---|
-| 点名/提问 | 展示姓名/可称呼昵称/ASR 容错变体、匹配灵敏度、点名/提问抑制窗口、提问词等级 |
+| 点名/提问 | 展示姓名/可称呼昵称/ASR 容错变体、中文定向前缀与局部缺席判断、匹配灵敏度、点名/提问抑制窗口、提问词等级 |
 | 本地 ASR | 可选择日常 streaming profile；模型按所选 profile 安装/复用，旧 VAD/HTTP ASR 只在导入/恢复边界使用 |
 | 提醒 | 振动与系统通知两个通道、锁屏内容固定隐藏、震动模式；不修改系统音量 |
 | AI | Base URL、AI key、模型、回答长度、答案风格、流式输出 |
@@ -187,7 +188,7 @@ app/src/main/java/com/classsentinel/
 
 ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a user-selectable local sherpa-onnx streaming ASR profile, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate (489 tests across 90 test classes), a clean Android Lint report, and a successful debug APK build. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants and requires a vocative/targeting boundary. This is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate (498 tests across 90 test classes), a clean Android Lint report, and a successful debug APK build. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions per name occurrence rather than globally. This is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

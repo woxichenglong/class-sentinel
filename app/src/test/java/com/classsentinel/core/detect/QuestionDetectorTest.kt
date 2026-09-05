@@ -54,6 +54,22 @@ class QuestionDetectorTest {
     }
 
     @Test
+    fun `bare answer cue is an answerable open question`() {
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("请张伟回答", 1)?.scope,
+        )
+    }
+
+    @Test
+    fun `spoken say cue is available at standard level`() {
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("张伟说说他的看法", 2)?.scope,
+        )
+    }
+
+    @Test
     fun `answerable detector rejects binary confirmation`() {
         assertNull(QuestionDetector.detectAnswerable("这个结论对不对", 3))
         assertNull(QuestionDetector.detectAnswerable("是不是这样", 3))
