@@ -10,8 +10,11 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
 import com.classsentinel.MainActivity
-import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.pipeline.PipelineState
+import com.classsentinel.core.speech.LocalListenStartPreflight
+import com.classsentinel.core.speech.ModelProfile
+import com.classsentinel.core.speech.ModelReadinessChecker
+import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.data.SettingsRepositoryHolder
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveStreamBus
@@ -57,10 +60,10 @@ internal fun tilePresentationFor(state: PipelineState, ready: Boolean): TilePres
 internal fun tileActionFor(
     state: PipelineState,
     microphoneGranted: Boolean,
-    asrConfigured: Boolean,
+    modelReady: Boolean,
 ): ListenTileAction = when {
     isListeningState(state) -> ListenTileAction.STOP
-    !microphoneGranted || !asrConfigured -> ListenTileAction.OPEN_SETUP
+    !microphoneGranted || !modelReady -> ListenTileAction.OPEN_SETUP
     else -> ListenTileAction.START
 }
 
@@ -74,6 +77,13 @@ class ListenTileService : TileService() {
     private var stateJob: Job? = null
     @Volatile
     private var startReady = false
+
+    private val localListenPreflight: LocalListenStartPreflight by lazy {
+        LocalListenStartPreflight(
+            readinessChecker = ModelReadinessChecker(applicationContext.filesDir),
+            assetOpener = { path -> applicationContext.assets.open(path) },
+        )
+    }
 
     override fun onStartListening() {
         super.onStartListening()
@@ -97,13 +107,18 @@ class ListenTileService : TileService() {
         super.onClick()
         scope.launch {
             val state = LiveStreamBus.pipelineState.value
-            val microphoneGranted = hasMicrophonePermission()
-            val asrConfigured = hasAsrConfiguration()
-            startReady = microphoneGranted && asrConfigured
-            when (tileActionFor(state, microphoneGranted, asrConfigured)) {
-                ListenTileAction.STOP -> sendStop()
-                ListenTileAction.START -> sendStart()
-                ListenTileAction.OPEN_SETUP -> openSetup()
+            if (isListeningState(state)) {
+                startReady = true
+                sendStop()
+            } else {
+                val microphoneGranted = hasMicrophonePermission()
+                val modelReady = ensureLocalModelReady()
+                startReady = microphoneGranted && modelReady
+                when (tileActionFor(state, microphoneGranted, modelReady)) {
+                    ListenTileAction.STOP -> sendStop()
+                    ListenTileAction.START -> sendStart()
+                    ListenTileAction.OPEN_SETUP -> openSetup()
+                }
             }
             updateTile()
         }
@@ -168,25 +183,26 @@ class ListenTileService : TileService() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
-    /**
-     * Tile 不负责申请权限，只在启动前验证配置；缺配置就回到应用由 onboarding/self-test
-     * 给出具体操作。讯飞凭据当前没有持久化入口，因此选择讯飞时安全地视为未配置。
-     */
-    private suspend fun hasAsrConfiguration(): Boolean {
+    /** Resolve the same dedicated local profile that Home/ListenService use. */
+    private suspend fun selectedLocalProfile(): ModelProfile? {
         return try {
             val settings = SettingsRepositoryHolder.get(applicationContext)
             settings.load()
-            when (settings.asrEngineFlow.first()) {
-                "xunfei" -> AppConfig.xunfeiAppId.isNotBlank() && AppConfig.xunfeiApiKey.isNotBlank()
-                else -> AppConfig.siliconApiKey.isNotBlank()
-            }
+            ModelProfiles.resolveDaily(settings.localAsrModelIdFlow.first())
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            false
+            null
         }
     }
 
-    private suspend fun hasStartPrerequisites(): Boolean =
-        hasMicrophonePermission() && hasAsrConfiguration()
+    private suspend fun hasStartPrerequisites(): Boolean {
+        val profile = selectedLocalProfile() ?: return false
+        return hasMicrophonePermission() && localListenPreflight.isReady(profile)
+    }
+
+    private suspend fun ensureLocalModelReady(): Boolean {
+        val profile = selectedLocalProfile() ?: return false
+        return localListenPreflight.ensureReady(profile)
+    }
 }

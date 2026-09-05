@@ -1,6 +1,7 @@
 package com.classsentinel.core.detect
 
 import kotlinx.coroutines.flow.StateFlow
+import java.util.Locale
 
 enum class EventType { ROLLCALL, QUESTION }
 
@@ -25,8 +26,8 @@ class EventEngine(
     private val sensitivityFlow: StateFlow<Sensitivity>,
 ) {
     private var confirmedRollcallTs = 0L
-    private var lastDirectQuestionTs = 0L
-    private var lastClassOpenQuestionTs = 0L
+    private var lastDirectQuestion: LastQuestion? = null
+    private var lastClassOpenQuestion: LastQuestion? = null
     private val finalWindow = FinalTranscriptWindow()
     private val processedFinalIds = mutableSetOf<Int>()
     private val processedPartialRollcallIds = mutableSetOf<Int>()
@@ -36,8 +37,8 @@ class EventEngine(
     /** Clear all per-listening-session state before a reused handle starts a new course. */
     fun resetSession() {
         confirmedRollcallTs = 0L
-        lastDirectQuestionTs = 0L
-        lastClassOpenQuestionTs = 0L
+        lastDirectQuestion = null
+        lastClassOpenQuestion = null
         processedFinalIds.clear()
         processedPartialRollcallIds.clear()
         provisionalRollcallIds.clear()
@@ -63,7 +64,7 @@ class EventEngine(
             return null
         }
         QuestionDetector.detect(segment, sens.questionWordLevel)?.let {
-            if (canEmitQuestion(EventScope.CLASS_OPEN, ts, sens.questionSuppressMs)) {
+            if (canEmitQuestion(EventScope.CLASS_OPEN, segment, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
                     triggerText = segment,
@@ -127,7 +128,7 @@ class EventEngine(
 
         // 明确问当前学生：姓名命中会把开放题提升为 DIRECT；高置信度“你”由 detector 自己识别。
         if (question != null && (question.scope == EventScope.DIRECT || nameHit != null)) {
-            if (canEmitQuestion(EventScope.DIRECT, ts, sens.questionSuppressMs)) {
+            if (canEmitQuestion(EventScope.DIRECT, final.text, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
                     triggerText = final.text,
@@ -170,7 +171,7 @@ class EventEngine(
 
         // 2. 无姓名的高置信度开放题/明确邀请。
         if (question?.scope == EventScope.CLASS_OPEN) {
-            if (canEmitQuestion(EventScope.CLASS_OPEN, ts, sens.questionSuppressMs)) {
+            if (canEmitQuestion(EventScope.CLASS_OPEN, final.text, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
                     triggerText = final.text,
@@ -184,14 +185,56 @@ class EventEngine(
         return null
     }
 
-    private fun canEmitQuestion(scope: EventScope, ts: Long, suppressionMs: Long): Boolean {
-        val lastTs = if (scope == EventScope.DIRECT) lastDirectQuestionTs else lastClassOpenQuestionTs
-        if (lastTs != 0L && ts - lastTs < suppressionMs) return false
+    private fun canEmitQuestion(
+        scope: EventScope,
+        text: String,
+        ts: Long,
+        suppressionMs: Long,
+    ): Boolean {
+        val fingerprint = normalizeQuestion(text)
+        val lastQuestion = if (scope == EventScope.DIRECT) lastDirectQuestion else lastClassOpenQuestion
+        if (lastQuestion != null && ts - lastQuestion.ts < suppressionMs &&
+            questionSimilarity(lastQuestion.fingerprint, fingerprint) >= QUESTION_SIMILARITY_THRESHOLD
+        ) {
+            return false
+        }
         if (scope == EventScope.DIRECT) {
-            lastDirectQuestionTs = ts
+            lastDirectQuestion = LastQuestion(fingerprint, ts)
         } else {
-            lastClassOpenQuestionTs = ts
+            lastClassOpenQuestion = LastQuestion(fingerprint, ts)
         }
         return true
+    }
+
+    private fun normalizeQuestion(text: String): String =
+        text.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
+
+    private fun questionSimilarity(left: String, right: String): Double {
+        if (left == right) return 1.0
+        if (left.isEmpty() || right.isEmpty()) return 0.0
+        val previous = IntArray(right.length + 1) { it }
+        val current = IntArray(right.length + 1)
+        for (leftIndex in left.indices) {
+            current[0] = leftIndex + 1
+            for (rightIndex in right.indices) {
+                val substitutionCost = if (left[leftIndex] == right[rightIndex]) 0 else 1
+                current[rightIndex + 1] = minOf(
+                    current[rightIndex] + 1,
+                    previous[rightIndex + 1] + 1,
+                    previous[rightIndex] + substitutionCost,
+                )
+            }
+            previous.indices.forEach { index -> previous[index] = current[index] }
+        }
+        return 1.0 - previous[right.length].toDouble() / maxOf(left.length, right.length)
+    }
+
+    private data class LastQuestion(
+        val fingerprint: String,
+        val ts: Long,
+    )
+
+    private companion object {
+        const val QUESTION_SIMILARITY_THRESHOLD = 0.85
     }
 }

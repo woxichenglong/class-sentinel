@@ -18,27 +18,27 @@ class ListenTileStateTest {
 
         activeStates.forEach { state ->
             assertEquals(TilePresentation.ACTIVE, tilePresentationFor(state, ready = true))
-            assertEquals(ListenTileAction.STOP, tileActionFor(state, microphoneGranted = true, asrConfigured = true))
+            assertEquals(ListenTileAction.STOP, tileActionFor(state, microphoneGranted = true, modelReady = true))
         }
     }
 
     @Test
-    fun `idle ready tile starts and idle unready tile opens setup`() {
+    fun `idle ready tile starts and idle model-unready tile opens setup`() {
         assertEquals(
             TilePresentation.INACTIVE,
             tilePresentationFor(PipelineState.Idle, ready = true),
         )
         assertEquals(
             ListenTileAction.START,
-            tileActionFor(PipelineState.Idle, microphoneGranted = true, asrConfigured = true),
+            tileActionFor(PipelineState.Idle, microphoneGranted = true, modelReady = true),
         )
         assertEquals(
             ListenTileAction.OPEN_SETUP,
-            tileActionFor(PipelineState.Idle, microphoneGranted = false, asrConfigured = true),
+            tileActionFor(PipelineState.Idle, microphoneGranted = false, modelReady = true),
         )
         assertEquals(
             ListenTileAction.OPEN_SETUP,
-            tileActionFor(PipelineState.Idle, microphoneGranted = true, asrConfigured = false),
+            tileActionFor(PipelineState.Idle, microphoneGranted = true, modelReady = false),
         )
     }
 

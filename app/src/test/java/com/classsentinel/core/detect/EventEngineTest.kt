@@ -91,6 +91,46 @@ class EventEngineTest {
     }
 
     @Test
+    fun `different questions in the same scope bypass suppression window`() {
+        val eng = engine()
+
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            eng.processFinal(
+                FinalTranscript(1, "为什么 CAPM 的 beta 会影响预期收益", 0L, 1_000L),
+                ts = 1_000,
+            )?.scope,
+        )
+
+        val second = eng.processFinal(
+            FinalTranscript(2, "为什么 WACC 要用税后债务成本", 1_000L, 31_000L),
+            ts = 31_000,
+        )
+
+        assertEquals(EventType.QUESTION, second?.type)
+        assertEquals(EventScope.CLASS_OPEN, second?.scope)
+    }
+
+    @Test
+    fun `near duplicate question remains suppressed within the same scope`() {
+        val eng = engine()
+
+        assertNotNull(
+            eng.processFinal(
+                FinalTranscript(1, "为什么 CAPM 的 beta 会影响预期收益", 0L, 1_000L),
+                ts = 1_000,
+            ),
+        )
+
+        assertNull(
+            eng.processFinal(
+                FinalTranscript(2, "为什么 CAPM 的 beta 会影响预期收益呢", 1_000L, 31_000L),
+                ts = 31_000,
+            ),
+        )
+    }
+
+    @Test
     fun `sensitivity hot update takes effect`() {
         val flow = MutableStateFlow<Sensitivity>(Sensitivity.STRICT)
         val eng = EventEngine(NameMatcher(listOf(NameEntry("张伟", emptyList()))), flow)

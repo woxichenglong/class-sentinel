@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.pipeline.PipelineState
+import com.classsentinel.core.speech.LocalListenStartPreflight
 import com.classsentinel.core.speech.ModelProfile
 import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ModelProfiles
@@ -84,12 +85,17 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val settings = remember { com.classsentinel.data.SettingsRepositoryHolder.get(context) }
     val localAsrModelId by settings.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
     val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
-    val readinessChecker = remember(context.filesDir) { ModelReadinessChecker(context.filesDir) }
+    val localListenPreflight = remember(context.filesDir) {
+        LocalListenStartPreflight(
+            readinessChecker = ModelReadinessChecker(context.filesDir),
+            assetOpener = { path -> context.applicationContext.assets.open(path) },
+        )
+    }
     val preparationScope = rememberCoroutineScope()
     var modelReady by remember(localAsrProfile.id) { mutableStateOf<Boolean?>(null) }
     var preparingModel by remember(localAsrProfile.id) { mutableStateOf(false) }
     LaunchedEffect(pipelineState, localAsrProfile.id) {
-        modelReady = readinessChecker.isReady(localAsrProfile)
+        modelReady = localListenPreflight.isReady(localAsrProfile)
     }
 
     val listening = pipelineState.isSessionActive() || activeCourseId != null
@@ -107,9 +113,8 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
             if (preparingModel) return
             preparingModel = true
             preparationScope.launch {
-                val prepared = readinessChecker.ensureReady(
+                val prepared = localListenPreflight.ensureReady(
                     profile = localAsrProfile,
-                    assetOpener = { path -> context.applicationContext.assets.open(path) },
                 )
                 modelReady = prepared
                 preparingModel = false
