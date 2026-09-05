@@ -60,6 +60,7 @@ import com.classsentinel.data.AppDatabase
 import com.classsentinel.data.Channels
 import com.classsentinel.data.SettingsRepository
 import com.classsentinel.data.SettingsRepositoryHolder
+import com.classsentinel.worker.AsrSettingsActionCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import android.Manifest
@@ -89,7 +90,9 @@ fun SettingsScreen() {
     val streamOutput by repo.streamOutputFlow.collectAsState(initial = true)
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
     val localAsrModelId by repo.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
+    val asrEngine by repo.asrEngineFlow.collectAsState(initial = "telespeech")
     val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
+    val asrActions = remember(context, repo) { AsrSettingsActionCoordinator.create(context, repo) }
     val readinessChecker = remember(context.filesDir) { ModelReadinessChecker(context.filesDir) }
     var localModelReady by remember(localAsrProfile.id) { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(localAsrProfile.id) {
@@ -101,6 +104,8 @@ fun SettingsScreen() {
     var draftAsrVariants by rememberSaveable { mutableStateOf("") }
     var showClearDialog by rememberSaveable { mutableStateOf(false) }
     var clearMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var asrSiliconKeyDraft by rememberSaveable { mutableStateOf("") }
+    var asrConfigMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun saveSnap(action: suspend () -> Unit) {
         scope.launch {
@@ -334,6 +339,61 @@ fun SettingsScreen() {
                     onSelect = { saveSnap { repo.saveAnswerStyle(it) } },
                 )
                 SwitchRow("流式输出", "逐段显示答案", checked = streamOutput) { saveSnap { repo.saveStreamOutput(it) } }
+            }
+        }
+
+        item {
+            SectionCard("失败音频恢复") {
+                Text(
+                    "修复离线 ASR 配置后，系统会自动恢复仍在 PENDING 的失败音频；不会上传实时本地 ASR 音频。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("恢复引擎", style = MaterialTheme.typography.titleSmall)
+                RadioRow(
+                    options = listOf(
+                        "telespeech" to "SiliconFlow XingChen",
+                        "sensevoice" to "SiliconFlow SenseVoice",
+                        "xunfei" to "讯飞（需已有凭证）",
+                    ),
+                    selected = asrEngine,
+                    onSelect = { engine ->
+                        saveSnap {
+                            val resumed = asrActions.saveEngine(engine)
+                            asrConfigMessage = if (resumed) {
+                                "引擎已保存，已恢复失败音频队列"
+                            } else {
+                                "引擎已保存，当前凭证未就绪或没有待恢复音频"
+                            }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = asrSiliconKeyDraft,
+                    onValueChange = { asrSiliconKeyDraft = it },
+                    label = { Text("SiliconFlow ASR API Key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        saveSnap {
+                            val candidate = asrSiliconKeyDraft.trim()
+                            val resumed = asrActions.saveSiliconKey(candidate)
+                            asrSiliconKeyDraft = ""
+                            asrConfigMessage = when {
+                                candidate.isBlank() -> "空 credential 已保存，不会恢复失败音频"
+                                resumed -> "ASR credential 已保存，已恢复失败音频队列"
+                                else -> "ASR credential 已保存，当前没有可恢复队列或引擎未就绪"
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("保存 ASR credential") }
+                asrConfigMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
 
