@@ -36,6 +36,10 @@ class StreamingTranscriptReducer(
                     )
                 }
             }
+            is StreamingAsrEvent.UtteranceEnded -> state.copy(
+                currentPartial = state.currentPartial
+                    ?.takeUnless { it.utteranceId == event.utteranceId },
+            )
             is StreamingAsrEvent.EngineChanged,
             is StreamingAsrEvent.Recovering,
             is StreamingAsrEvent.Failed,

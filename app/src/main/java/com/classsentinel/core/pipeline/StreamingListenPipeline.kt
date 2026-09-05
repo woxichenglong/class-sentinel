@@ -80,6 +80,8 @@ internal class StreamingListenPipeline(
                                 )
                             }
 
+                            is StreamingAsrEvent.UtteranceEnded -> Unit
+
                             is StreamingAsrEvent.EngineChanged -> {
                                 publishState(
                                     PipelineState.Listening(

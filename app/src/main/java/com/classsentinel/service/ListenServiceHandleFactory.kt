@@ -260,6 +260,10 @@ internal class SessionPipelineAdapter(
                         dispatchWrite(courseId, event, earlyAlerted)
                     }
 
+                    is StreamingAsrEvent.UtteranceEnded -> {
+                        LiveStreamBus.clearPartial(event.utteranceId)
+                    }
+
                     else -> Unit
                 }
             }

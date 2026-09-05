@@ -47,6 +47,23 @@ class StreamingListenPipelineTest {
     }
 
     @Test
+    fun `utterance ended is forwarded without becoming a final sentence`() = runTest {
+        val ended = StreamingAsrEvent.UtteranceEnded(1)
+        val observed = mutableListOf<StreamingAsrEvent>()
+        val pipeline = StreamingListenPipeline(
+            streamer = FakeStreamer(flowOf(ShortArray(1))),
+            speech = FakeStreamingSpeech(flowOf(ended)),
+            onEvent = { observed += it },
+        )
+
+        pipeline.start(this)
+        advanceUntilIdle()
+
+        assertEquals(listOf(ended), observed)
+        assertEquals(0, pipeline.finalCount)
+    }
+
+    @Test
     fun `repeated start creates one collector and stop releases streaming source without error`() = runTest {
         val streamer = HoldOpenStreamer()
         val speech = FakeStreamingSpeech(

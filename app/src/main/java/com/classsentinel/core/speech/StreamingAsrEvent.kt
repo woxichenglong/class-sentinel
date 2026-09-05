@@ -18,6 +18,9 @@ sealed interface StreamingAsrEvent {
         val endOffsetMs: Long,
     ) : StreamingAsrEvent
 
+    /** Explicit lifecycle boundary for an utterance that ended without final text. */
+    data class UtteranceEnded(val utteranceId: Int) : StreamingAsrEvent
+
     data class EngineChanged(val engine: String) : StreamingAsrEvent
 
     data class Recovering(val reason: String) : StreamingAsrEvent

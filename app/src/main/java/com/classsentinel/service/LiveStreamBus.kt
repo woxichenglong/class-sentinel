@@ -125,6 +125,13 @@ object LiveStreamBus {
         ).takeLast(MAX)
     }
 
+    /** Clear only the replaceable partial for [utteranceId]; finals and other IDs remain intact. */
+    fun clearPartial(utteranceId: Int) {
+        _transcript.value = _transcript.value.filterNot {
+            it is LiveTranscriptLine.Partial && it.utteranceId == utteranceId
+        }
+    }
+
     /** Commit one final utterance, remove its partial, and ignore duplicate finals. */
     fun pushFinal(utteranceId: Int, text: String, startOffsetMs: Long, endOffsetMs: Long) {
         if (text.isBlank()) return

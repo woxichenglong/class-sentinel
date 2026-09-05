@@ -35,6 +35,17 @@ class StreamingTranscriptReducerTest {
     }
 
     @Test
+    fun `utterance ended clears only the matching partial without creating a final`() {
+        val reducer = StreamingTranscriptReducer()
+        reducer.reduce(StreamingAsrEvent.Partial(7, "未完成", 500L))
+
+        val snapshot = reducer.reduce(StreamingAsrEvent.UtteranceEnded(7))
+
+        assertNull(snapshot.currentPartial)
+        assertTrue(snapshot.finalizedLines.isEmpty())
+    }
+
+    @Test
     fun `duplicate final is idempotent`() {
         val reducer = StreamingTranscriptReducer()
         val event = StreamingAsrEvent.Final(7, "同一句", 0L, 1_000L)

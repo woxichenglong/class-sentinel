@@ -34,6 +34,7 @@ internal class SherpaOnnxStreamingEngine(
         var utteranceId = 1
         var utteranceStartOffsetMs = 0L
         var lastPartialText: String? = null
+        var hasEmittedPartial = false
         var hasPendingAudio = false
         var inputFinished = false
         var recognizerInitMs: Long? = null
@@ -77,11 +78,14 @@ internal class SherpaOnnxStreamingEngine(
                                     endOffsetMs = offsetMs,
                                 ),
                             )
+                        } else {
+                            emit(StreamingAsrEvent.UtteranceEnded(utteranceId))
                         }
                         activeStream.reset()
                         utteranceId++
                         utteranceStartOffsetMs = offsetMs
                         lastPartialText = null
+                        hasEmittedPartial = false
                         hasPendingAudio = false
                     } else if (text.isNotBlank() && text != lastPartialText) {
                         emit(
@@ -92,6 +96,7 @@ internal class SherpaOnnxStreamingEngine(
                             ),
                         )
                         lastPartialText = text
+                        hasEmittedPartial = true
                     }
                 } finally {
                     decodeElapsedNanos += elapsedNanos(decodeChunkStartedAtNanos)
@@ -117,6 +122,8 @@ internal class SherpaOnnxStreamingEngine(
                                 endOffsetMs = endOffsetMs,
                             ),
                         )
+                    } else if (hasEmittedPartial) {
+                        emit(StreamingAsrEvent.UtteranceEnded(utteranceId))
                     }
                 }
             } finally {

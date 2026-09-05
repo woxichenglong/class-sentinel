@@ -35,6 +35,13 @@ class StreamingAsrEventTest {
     }
 
     @Test
+    fun `utterance ended carries only the utterance lifecycle identity`() {
+        val event: StreamingAsrEvent = StreamingAsrEvent.UtteranceEnded(7)
+
+        assertEquals(7, (event as StreamingAsrEvent.UtteranceEnded).utteranceId)
+    }
+
+    @Test
     fun `failed contains only safe error category`() {
         val event: StreamingAsrEvent = StreamingAsrEvent.Failed(StreamingAsrErrorKind.ASR_RUNTIME)
 

@@ -74,6 +74,49 @@ class SherpaOnnxStreamingEngineTest {
     }
 
     @Test
+    fun `blank endpoint emits utterance ended instead of a blank final`() = runTest {
+        val stream = BlankEndpointStream()
+        val engine = SherpaOnnxStreamingEngine(
+            recognizerFactory = { FakeRecognizer(stream) },
+        )
+
+        val events = engine.transcribe(
+            flowOf(shortArrayOf(100), shortArrayOf(100)),
+        ).toList()
+
+        assertEquals(
+            listOf(
+                StreamingAsrEvent.Partial(1, "草稿", 0L),
+                StreamingAsrEvent.UtteranceEnded(1),
+            ),
+            events,
+        )
+        assertEquals(1, stream.resetCalls)
+        assertEquals(1, stream.inputFinishedCalls)
+        assertTrue(events.none { it is StreamingAsrEvent.Final })
+    }
+
+    @Test
+    fun `blank input finished flush emits utterance ended for a prior partial`() = runTest {
+        val stream = BlankFlushStream()
+        val engine = SherpaOnnxStreamingEngine(
+            recognizerFactory = { FakeRecognizer(stream) },
+        )
+
+        val events = engine.transcribe(flowOf(shortArrayOf(100))).toList()
+
+        assertEquals(
+            listOf(
+                StreamingAsrEvent.Partial(1, "草稿", 0L),
+                StreamingAsrEvent.UtteranceEnded(1),
+            ),
+            events,
+        )
+        assertEquals(1, stream.inputFinishedCalls)
+        assertTrue(events.none { it is StreamingAsrEvent.Final })
+    }
+
+    @Test
     fun `engine identity and sample rate come from model profile`() = runTest {
         val stream = FakeStream()
         val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
@@ -276,6 +319,68 @@ class SherpaOnnxStreamingEngineTest {
 
         override fun inputFinished() {
             inputFinishedCalls++
+            readyFrames = 1
+        }
+
+        override fun release() = Unit
+    }
+
+    private class BlankEndpointStream : SherpaOnlineStreamPort {
+        var resetCalls = 0
+        var inputFinishedCalls = 0
+        private var inputCount = 0
+        private var readyFrames = 0
+
+        override fun acceptWaveform(samples: FloatArray, sampleRate: Int) {
+            inputCount++
+            readyFrames = 1
+        }
+
+        override fun isReady(): Boolean = readyFrames > 0
+
+        override fun decode() {
+            readyFrames--
+        }
+
+        override fun resultText(): String = if (inputCount == 1) "草稿" else ""
+
+        override fun isEndpoint(): Boolean = inputCount == 2
+
+        override fun reset() {
+            resetCalls++
+        }
+
+        override fun inputFinished() {
+            inputFinishedCalls++
+        }
+
+        override fun release() = Unit
+    }
+
+    private class BlankFlushStream : SherpaOnlineStreamPort {
+        var inputFinishedCalls = 0
+        private var flushing = false
+        private var readyFrames = 0
+
+        override fun acceptWaveform(samples: FloatArray, sampleRate: Int) {
+            readyFrames = 1
+        }
+
+        override fun isReady(): Boolean = readyFrames > 0
+
+        override fun decode() {
+            readyFrames--
+        }
+
+        override fun resultText(): String = if (flushing) "" else "草稿"
+
+        override fun isEndpoint(): Boolean = false
+
+        override fun reset() = Unit
+
+        override fun inputFinished() {
+            inputFinishedCalls++
+            flushing = true
             readyFrames = 1
         }
 

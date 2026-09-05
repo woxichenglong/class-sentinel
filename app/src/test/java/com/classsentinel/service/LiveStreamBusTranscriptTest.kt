@@ -46,6 +46,18 @@ class LiveStreamBusTranscriptTest {
     }
 
     @Test
+    fun `clear partial removes only the requested utterance`() {
+        val first = LiveTranscriptLine.Partial(1, "第一句草稿", 100L)
+        val second = LiveTranscriptLine.Partial(2, "第二句草稿", 200L)
+        LiveStreamBus.pushPartial(first.utteranceId, first.text, first.audioOffsetMs)
+        LiveStreamBus.pushPartial(second.utteranceId, second.text, second.audioOffsetMs)
+
+        LiveStreamBus.clearPartial(1)
+
+        assertEquals(listOf(second), LiveStreamBus.transcript.value)
+    }
+
+    @Test
     fun `clear removes current display but preserves pipeline state`() {
         val state = com.classsentinel.core.pipeline.PipelineState.Listening(2)
         LiveStreamBus.pushState(state)

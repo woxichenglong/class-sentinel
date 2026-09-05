@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -79,6 +80,103 @@ class SessionPipelineAdapterTest {
         coordinator.close()
     }
 
+    @Test
+    fun `utterance ended clears blank endpoint partial without transcript event or alert side effects`() = runTest {
+        val alerts = RecordingChannel()
+        val coordinator = coordinator(this, alerts)
+        var transcriptWrites = 0
+        var eventWrites = 0
+        val adapter = adapter(
+            scope = this,
+            alert = coordinator,
+            pipeline = eventPipeline(
+                listOf(
+                    StreamingAsrEvent.Partial(1, "草稿", 100L),
+                    StreamingAsrEvent.UtteranceEnded(1),
+                ),
+            ),
+            insertTranscript = { transcriptWrites++; 1L },
+            insertEvent = { eventWrites++; 1L },
+        )
+
+        adapter.start()
+        advanceUntilIdle()
+
+        assertEquals(emptyList<LiveTranscriptLine>(), LiveStreamBus.transcript.value)
+        assertEquals(0, transcriptWrites)
+        assertEquals(0, eventWrites)
+        assertEquals(0, alerts.fired)
+        adapter.stop()
+        coordinator.close()
+    }
+
+    @Test
+    fun `ended clears only one partial and does not affect another utterance`() = runTest {
+        val alerts = RecordingChannel()
+        val coordinator = coordinator(this, alerts)
+        var transcriptWrites = 0
+        var eventWrites = 0
+        val adapter = adapter(
+            scope = this,
+            alert = coordinator,
+            pipeline = eventPipeline(
+                listOf(
+                    StreamingAsrEvent.Partial(1, "第一句草稿", 100L),
+                    StreamingAsrEvent.Partial(2, "第二句草稿", 200L),
+                    StreamingAsrEvent.UtteranceEnded(1),
+                ),
+            ),
+            insertTranscript = { transcriptWrites++; 1L },
+            insertEvent = { eventWrites++; 1L },
+        )
+
+        adapter.start()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(LiveTranscriptLine.Partial(2, "第二句草稿", 200L)),
+            LiveStreamBus.transcript.value,
+        )
+        assertEquals(0, transcriptWrites)
+        assertEquals(0, eventWrites)
+        assertEquals(0, alerts.fired)
+        adapter.stop()
+        coordinator.close()
+    }
+
+    @Test
+    fun `partial followed by final reaches persistence and alert path`() = runTest {
+        val alerts = RecordingChannel()
+        val coordinator = coordinator(this, alerts)
+        var transcriptWrites = 0
+        var eventWrites = 0
+        val adapter = adapter(
+            scope = this,
+            alert = coordinator,
+            pipeline = eventPipeline(
+                listOf(
+                    StreamingAsrEvent.Partial(1, "草稿", 100L),
+                    StreamingAsrEvent.Final(1, "张伟，你来回答", 0L, 1_000L),
+                ),
+            ),
+            insertTranscript = { transcriptWrites++; 1L },
+            insertEvent = { eventWrites++; 1L },
+        )
+
+        adapter.start()
+        advanceUntilIdle()
+        adapter.stop()
+
+        assertEquals(
+            listOf(LiveTranscriptLine.Final(1, "张伟，你来回答", 0L, 1_000L)),
+            LiveStreamBus.transcript.value,
+        )
+        assertEquals(1, transcriptWrites)
+        assertEquals(1, eventWrites)
+        assertEquals(1, alerts.fired)
+        coordinator.close()
+    }
+
     private fun coordinator(scope: CoroutineScope, channel: RecordingChannel): AlertCoordinator = AlertCoordinator(
         channels = listOf(channel),
         enabledFlow = MutableStateFlow(setOf(channel.key)),
@@ -88,13 +186,14 @@ class SessionPipelineAdapterTest {
     private fun adapter(
         scope: CoroutineScope,
         alert: AlertCoordinator,
+        pipeline: StreamingListenPipeline = emptyPipeline(),
         onQuestion: (ClassEvent, Long?) -> Unit = { _, _ -> },
         insertTranscript: suspend (TranscriptChunkEntity) -> Long,
         insertEvent: suspend (EventEntity) -> Long,
     ): SessionPipelineAdapter = SessionPipelineAdapter(
         context = ContextWrapper(null),
         scope = scope,
-        pipeline = emptyPipeline(),
+        pipeline = pipeline,
         eventEngine = EventEngine(
             nameMatcher = NameMatcher(listOf(NameEntry("张伟", emptyList()))),
             sensitivityFlow = MutableStateFlow(Sensitivity.STANDARD),
@@ -107,6 +206,18 @@ class SessionPipelineAdapterTest {
         insertTranscript = insertTranscript,
         insertEvent = insertEvent,
     )
+
+    private fun eventPipeline(events: List<StreamingAsrEvent>): StreamingListenPipeline =
+        StreamingListenPipeline(
+            streamer = AudioStreamer(context = null),
+            speech = object : StreamingSpeechEngine {
+                override val name: String = "test"
+                override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> =
+                    kotlinx.coroutines.flow.flow {
+                        events.forEach { emit(it) }
+                    }
+            },
+        )
 
     private fun emptyPipeline(): StreamingListenPipeline = StreamingListenPipeline(
         streamer = AudioStreamer(context = null),
