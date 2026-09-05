@@ -16,6 +16,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * v0.2 Task 16：失败/未转写语音分段的私有文件存储边界测试。
@@ -121,8 +124,13 @@ class PendingAudioStoreTest {
         return b
     }
 
-    private fun segment(id: String, startMs: Long = 500L, endMs: Long = 1500L): WavSegment =
-        WavSegment(id = id, startOffsetMs = startMs, endOffsetMs = endMs, bytes = wavBytes())
+    private fun segment(
+        id: String,
+        startMs: Long = 500L,
+        endMs: Long = 1500L,
+        seed: Int = 7,
+    ): WavSegment =
+        WavSegment(id = id, startOffsetMs = startMs, endOffsetMs = endMs, bytes = wavBytes(seed = seed))
 
     private fun ascii(b: ByteArray, offset: Int, s: String) {
         for (i in s.indices) b[offset + i] = s[i].code.toByte()
@@ -208,6 +216,87 @@ class PendingAudioStoreTest {
         assertEquals("one file on disk", 1, root.listFiles()!!.size)
         assertTrue(File(first.filePath).readBytes().contentEquals(seg.bytes))
         assertEquals("both rows recorded", 2, dao.inserted.size)
+    }
+
+    @Test
+    fun `existing target is replaced through atomic move without deleting it first`() = runBlocking {
+        val old = segment("replace", seed = 7)
+        val replacement = segment("replace", seed = 99)
+        store.save(courseId = 7L, segment = old)
+        val atomicFlags = mutableListOf<Boolean>()
+        val replacingStore = PendingAudioStore(
+            rootDir = root,
+            dao = dao,
+            mover = PendingAudioMover { source, target, atomic ->
+                atomicFlags += atomic
+                Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            },
+        )
+
+        replacingStore.save(courseId = 7L, segment = replacement)
+
+        assertEquals(listOf(true), atomicFlags)
+        assertTrue(File(root, "c7-sreplace.wav").readBytes().contentEquals(replacement.bytes))
+        assertTrue("no temp residue", tempResidue().isEmpty())
+    }
+
+    @Test
+    fun `unsupported atomic move falls back to replace existing without deleting target`() = runBlocking {
+        val moves = mutableListOf<Boolean>()
+        val movingStore = PendingAudioStore(
+            rootDir = root,
+            dao = dao,
+            mover = PendingAudioMover { source, target, atomic ->
+                moves += atomic
+                if (atomic) {
+                    throw AtomicMoveNotSupportedException(
+                        source.toString(),
+                        target.toString(),
+                        "synthetic unsupported",
+                    )
+                }
+                Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            },
+        )
+
+        movingStore.save(courseId = 7L, segment = segment("fallback"))
+
+        assertEquals(listOf(true, false), moves)
+        assertTrue(File(root, "c7-sfallback.wav").isFile)
+        assertTrue("no temp residue", tempResidue().isEmpty())
+    }
+
+    @Test
+    fun `replace failure keeps the old target content and cleans tmp`() = runBlocking {
+        val old = segment("keep-old", seed = 7)
+        val replacement = segment("keep-old", seed = 99)
+        store.save(courseId = 7L, segment = old)
+        val failingStore = PendingAudioStore(
+            rootDir = root,
+            dao = dao,
+            mover = PendingAudioMover { source, target, atomic ->
+                if (atomic) {
+                    throw AtomicMoveNotSupportedException(
+                        source.toString(),
+                        target.toString(),
+                        "synthetic unsupported",
+                    )
+                }
+                throw IOException("synthetic replace failure")
+            },
+        )
+
+        try {
+            failingStore.save(courseId = 7L, segment = replacement)
+            fail("replace failure must propagate")
+        } catch (e: IOException) {
+            // expected
+        }
+
+        val target = File(root, "c7-skeep-old.wav")
+        assertTrue("old target remains", target.isFile)
+        assertTrue("old target content remains", target.readBytes().contentEquals(old.bytes))
+        assertTrue("no temp residue", tempResidue().isEmpty())
     }
 
     // ---- delete：文件 + DB 行，幂等，不越界 ---- //

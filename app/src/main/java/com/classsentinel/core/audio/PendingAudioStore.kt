@@ -6,6 +6,14 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
+/** File move seam used to exercise filesystem capability and failure boundaries without I/O fakes. */
+internal fun interface PendingAudioMover {
+    fun move(source: File, target: File, atomic: Boolean)
+}
 
 /**
  * v0.2 Task 16：失败/未转写语音分段的私有文件存储边界。
@@ -24,11 +32,23 @@ import java.io.RandomAccessFile
  *   不会把损坏字节静默当作成功 segment。
  * - 红线：本类不打印、不记录原始音频字节；错误信息只描述类别，不含音频内容。
  */
-class PendingAudioStore(
+class PendingAudioStore internal constructor(
     private val rootDir: File,
     private val dao: PendingAudioDao,
     /** 注入时钟（测试确定性）；默认 System.currentTimeMillis。 */
     private val clock: () -> Long = System::currentTimeMillis,
+    private val mover: PendingAudioMover = PendingAudioMover { source, target, atomic ->
+        if (atomic) {
+            Files.move(
+                source.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } else {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    },
 ) {
 
     /** load 的 typed 结果：成功字节 / 文件缺失 / WAV 损坏（不可重试，应终态失败）。 */
@@ -203,12 +223,15 @@ class PendingAudioStore(
                 out.flush()
                 out.fd.sync()
             }
-            if (!tmp.renameTo(target)) {
-                // Windows：renameTo 无法覆盖已存在文件；先删旧再 rename（写入已 fsync，安全）
-                if (target.exists() && target.delete() && tmp.renameTo(target)) {
-                    return
-                }
-                throw IOException("atomic rename failed: $tmp -> $target")
+            try {
+                mover.move(tmp, target, atomic = true)
+            } catch (_: AtomicMoveNotSupportedException) {
+                // Capability fallback still asks the filesystem to replace in one operation;
+                // it never pre-deletes the old target.
+                mover.move(tmp, target, atomic = false)
+            } catch (_: UnsupportedOperationException) {
+                // Some providers report unsupported ATOMIC_MOVE as UOE instead of the JDK type.
+                mover.move(tmp, target, atomic = false)
             }
         } finally {
             if (tmp.exists()) tmp.delete()
