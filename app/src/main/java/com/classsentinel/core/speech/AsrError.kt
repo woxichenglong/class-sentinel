@@ -10,7 +10,14 @@ data class AsrError(
     val kind: Kind,
     val retriable: Boolean,
     val message: String = "",
+    /** Worker 需要知道配置错误是全局阻塞还是当前音频自身错误。 */
+    val scope: Scope = Scope.ITEM,
 ) {
+    enum class Scope {
+        ITEM,
+        WORKER_GLOBAL,
+    }
+
     enum class Kind {
         /** 鉴权失败（401/403 等），重试无意义 */
         AUTH,
@@ -37,7 +44,12 @@ data class AsrError(
     companion object {
         /** 由 HTTP 状态码映射错误类型；非法/未知状态统一归为不可重试的 UNKNOWN。 */
         fun fromHttp(code: Int): AsrError = when (code) {
-            401, 403 -> AsrError(Kind.AUTH, retriable = false, message = "http $code")
+            401, 403 -> AsrError(
+                Kind.AUTH,
+                retriable = false,
+                message = "http $code",
+                scope = Scope.WORKER_GLOBAL,
+            )
             429 -> AsrError(Kind.RATE_LIMIT, retriable = true, message = "http $code")
             in 500..599 -> AsrError(Kind.SERVER, retriable = true, message = "http $code")
             else -> AsrError(Kind.UNKNOWN, retriable = false, message = "http $code")

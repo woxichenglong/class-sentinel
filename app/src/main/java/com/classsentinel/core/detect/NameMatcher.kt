@@ -101,26 +101,43 @@ class NameMatcher private constructor(
             suffix = suffix.removePrefix("同学")
                 .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
         }
-        if (startsWithLocalContext(suffix)) return true
-
-        val secondPerson = when {
-            suffix.startsWith("你") -> "你"
-            suffix.startsWith("您") -> "您"
-            else -> return false
-        }
-        suffix = suffix.removePrefix(secondPerson)
-            .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
-        return startsWithLocalContext(suffix)
+        return consumeLocalContext(suffix)
     }
 
-    private fun startsWithLocalContext(text: String): Boolean {
-        var suffix = text
-        while (true) {
-            if (contextWords.any { suffix.startsWith(it) }) return true
-            val filler = contextFillers.firstOrNull { suffix.startsWith(it) } ?: return false
-            suffix = suffix.removePrefix(filler)
-                .trimStart { it.isWhitespace() || !it.isLetterOrDigit() }
+    /**
+     * 有界局部 consumer：依次消费 filler / 最多一个你(您) / filler，直到 contextWord。
+     * 每一轮要么命中、要么实际前进、要么返回 false，避免 filler 结构造成死循环。
+     */
+    private fun consumeLocalContext(text: String): Boolean {
+        var cursor = 0
+        var consumedSecondPerson = false
+        while (cursor < text.length) {
+            while (cursor < text.length &&
+                (text[cursor].isWhitespace() || !text[cursor].isLetterOrDigit())
+            ) {
+                cursor++
+            }
+            if (cursor >= text.length) return false
+            if (contextWords.any { text.startsWith(it, cursor) }) return true
+
+            if (!consumedSecondPerson) {
+                val pronoun = when {
+                    text.startsWith("你", cursor) -> "你"
+                    text.startsWith("您", cursor) -> "您"
+                    else -> null
+                }
+                if (pronoun != null) {
+                    cursor += pronoun.length
+                    consumedSecondPerson = true
+                    continue
+                }
+            }
+
+            val filler = contextFillers.firstOrNull { text.startsWith(it, cursor) }
+                ?: return false
+            cursor += filler.length
         }
+        return false
     }
 
     /** 单字符命中是否处于点名边界：前置不是连续字（未被更长词嵌入），且后缀为空/空白/标点/指令词。 */

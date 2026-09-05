@@ -53,8 +53,8 @@ class PendingTranscriptionWorker(
         val deps = dependencies ?: PendingTranscriptionRuntime.dependencies(applicationContext)
         val transcriber = deps.transcriber
         if (transcriber == null) {
-            // 未配置 transcriber：安全 CONFIG 终态失败，绝不删除 pending。
-            return failure(ERROR_KIND_CONFIG, ERROR_CODE_UNCONFIGURED)
+            // 未配置 transcriber 是整个 Worker 的全局阻塞；不把 pending 判为音频坏段。
+            return globalFailure(ERROR_CODE_UNCONFIGURED)
         }
 
         val queue = deps.queue
@@ -71,10 +71,6 @@ class PendingTranscriptionWorker(
             if (pending.isEmpty()) break
             val batch = pending.take(boundedBatchLimit).take(executionBudget - processed)
 
-            // 本批次第一个安全存储错误（MISSING/CORRUPT）：继续处理/标记其余 pending 行，
-            // 全部标记终态 FAILED 后，批次整体仍须以 STORAGE 终态 failure 返回（Task 16）。
-            var firstStorageErrorCode: String? = null
-
             for (entity in batch) {
                 if (isStopped) return ListenableWorker.Result.retry()
 
@@ -82,7 +78,6 @@ class PendingTranscriptionWorker(
                     is LoadResult.Missing -> {
                         // 缺失文件无法恢复：终态 FAILED + 固定安全存储错误类别，不无限重试。
                         queue.markFailed(entity, ERROR_KIND_STORAGE, ERROR_CODE_MISSING)
-                        if (firstStorageErrorCode == null) firstStorageErrorCode = ERROR_CODE_MISSING
                         processed++
                         continue
                     }
@@ -90,7 +85,6 @@ class PendingTranscriptionWorker(
                     is LoadResult.Corrupt -> {
                         // 损坏 WAV 同样不可重试：终态 FAILED + 安全存储错误类别。
                         queue.markFailed(entity, ERROR_KIND_STORAGE, ERROR_CODE_CORRUPT)
-                        if (firstStorageErrorCode == null) firstStorageErrorCode = ERROR_CODE_CORRUPT
                         processed++
                         continue
                     }
@@ -120,6 +114,11 @@ class PendingTranscriptionWorker(
                         }
                         if (failure != null) {
                             val kind = failure.kind
+                            if (failure.isWorkerGlobal()) {
+                                // AUTH / global CONFIG 代表当前 transcriber 不可用：保留
+                                // 当前及后续 PENDING，等配置修复后由显式 re-enqueue 入口恢复。
+                                return globalFailure(kind.safeCode())
+                            }
                             val isRetriable = when (kind) {
                                 AsrError.Kind.NETWORK,
                                 AsrError.Kind.RATE_LIMIT,
@@ -135,7 +134,9 @@ class PendingTranscriptionWorker(
                             }
 
                             queue.markFailed(entity, kind.safeCode(), failure.errorCode())
-                            return failure(kind.safeCode(), failure.errorCode())
+                            // 单条不可恢复失败只终结当前 row；不能污染整个 Worker 的结果。
+                            processed++
+                            continue
                         }
 
                         val text = outcome.getOrThrow().text
@@ -175,11 +176,6 @@ class PendingTranscriptionWorker(
                 }
             }
 
-            // 本批次出现过不可恢复的安全存储错误（MISSING/CORRUPT）：全部行已标记终态
-            // FAILED，批次整体必须以 STORAGE 终态 failure 返回，而不是 success()（Task 16）。
-            if (firstStorageErrorCode != null) {
-                return failure(ERROR_KIND_STORAGE, firstStorageErrorCode)
-            }
         }
 
         if (queue.pendingSegments().isNotEmpty()) {
@@ -205,8 +201,15 @@ class PendingTranscriptionWorker(
                 .build(),
         )
 
+    private fun globalFailure(code: String): ListenableWorker.Result =
+        failure(ERROR_KIND_GLOBAL, code)
+
     private fun AsrError.errorCode(): String? =
         if (message.isNotBlank()) "asr" else null
+
+    private fun AsrError.isWorkerGlobal(): Boolean =
+        kind == AsrError.Kind.AUTH ||
+            (kind == AsrError.Kind.CONFIG && scope == AsrError.Scope.WORKER_GLOBAL)
 
     private fun Throwable.normalizedAsrError(): AsrError =
         when (this) {
@@ -242,6 +245,7 @@ class PendingTranscriptionWorker(
         const val KEY_ERROR_CODE = "errorCode"
 
         const val ERROR_KIND_STORAGE = "STORAGE"
+        const val ERROR_KIND_GLOBAL = "GLOBAL"
         const val ERROR_CODE_MISSING = "MISSING"
         const val ERROR_CODE_CORRUPT = "CORRUPT"
         const val ERROR_KIND_CONFIG = "CONFIG"
@@ -281,6 +285,15 @@ class PendingTranscriptionWorker(
             workManager.enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
                 ExistingWorkPolicy.KEEP,
+                buildRequest(),
+            )
+        }
+
+        /** 配置修复后的显式恢复入口：REPLACE 已结束的 global-failure work。 */
+        fun enqueueAfterGlobalFailure(workManager: WorkManager) {
+            workManager.enqueueUniqueWork(
+                UNIQUE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
                 buildRequest(),
             )
         }

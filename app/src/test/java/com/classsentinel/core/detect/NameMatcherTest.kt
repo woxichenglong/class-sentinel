@@ -68,6 +68,23 @@ class NameMatcherTest {
     }
 
     @Test
+    fun `filler then second person then context hits`() {
+        assertEquals("张伟", NameMatcher(names).detect("张伟，请你回答一下", Sensitivity.STANDARD)?.name)
+        assertEquals("张伟", NameMatcher(names).detect("张伟，现在你来回答", Sensitivity.STANDARD)?.name)
+        assertEquals("张伟", NameMatcher(names).detect("张伟同学，请你先说说", Sensitivity.STANDARD)?.name)
+    }
+
+    @Test
+    fun `context parser remains occurrence local with filler and second person`() {
+        val matcher = NameMatcher(
+            listOf(NameEntry("李华", emptyList()), NameEntry("张伟", emptyList()), NameEntry("王强", emptyList())),
+        )
+
+        assertFalse(matcher.detect("李华请你回答，张伟刚才的答案不错", Sensitivity.STANDARD)?.name == "张伟")
+        assertFalse(matcher.detect("王强起立，张伟先坐着", Sensitivity.STANDARD)?.name == "张伟")
+    }
+
+    @Test
     fun `unrelated second-person continuation does not count as rollcall context`() {
         assertNull(
             NameMatcher(names).detect("小李说说看，张伟你准备一下", Sensitivity.STANDARD),

@@ -130,7 +130,12 @@ open class XunfeiRtasrEngine(
         val desc = obj.optString("desc").lowercase()
         val isAuth = code == "10110" || desc.contains("auth") || desc.contains("authorization")
         return if (isAuth) {
-            AsrError(AsrError.Kind.AUTH, retriable = false, message = "Xunfei authentication failed")
+            AsrError(
+                AsrError.Kind.AUTH,
+                retriable = false,
+                message = "Xunfei authentication failed",
+                scope = AsrError.Scope.WORKER_GLOBAL,
+            )
         } else {
             AsrError(AsrError.Kind.UNKNOWN, retriable = false, message = "Xunfei provider error")
         }

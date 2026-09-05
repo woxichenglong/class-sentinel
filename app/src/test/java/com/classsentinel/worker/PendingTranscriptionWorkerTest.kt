@@ -142,7 +142,9 @@ class PendingTranscriptionWorkerTest {
         var failDelete = false
 
         override suspend fun pendingSegments(): List<PendingAudioEntity> =
-            pending.sortedWith(compareBy<PendingAudioEntity> { it.createdTs }.thenBy { it.id })
+            pending
+                .filter { it.state == "PENDING" }
+                .sortedWith(compareBy<PendingAudioEntity> { it.createdTs }.thenBy { it.id })
 
         override suspend fun recordTranscript(
             entity: PendingAudioEntity,
@@ -400,43 +402,53 @@ class PendingTranscriptionWorkerTest {
     }
 
     @Test
-    fun `retriable failure after max attempts is terminal FAILED`() = runBlocking {
+    fun `retriable failure after max attempts is item terminal and worker succeeds`() = runBlocking {
         val e1 = saveReal("a", createdTs = 100L)
         transcriber.errorBySegment["a"] = AsrError(AsrError.Kind.SERVER, retriable = true, message = "boom")
 
         val result = runWorker(deps(maxAttempts = 1))
 
-        // 带安全 Data 的 Failure：不做与空 Data failure() 的对象相等比较。
-        assertTerminalFailure(result, kind = "SERVER", code = "asr")
+        assertEquals(ListenableWorker.Result.success(), result)
         assertEquals(listOf(e1.id to "SERVER"), queue.failed)
         assertTrue(queue.deleted.isEmpty())
         assertTrue(queue.transcripts.isEmpty())
     }
 
     @Test
-    fun `AUTH failure is terminal without retry and stops the batch`() = runBlocking {
+    fun `AUTH failure is global without retry and preserves the batch`() = runBlocking {
         val eAuth = saveReal("auth", createdTs = 100L)
         val eCfg = saveReal("cfg", createdTs = 200L)
         transcriber.errorBySegment["auth"] = AsrError(AsrError.Kind.AUTH, retriable = false, message = "denied")
-        transcriber.errorBySegment["cfg"] = AsrError(AsrError.Kind.CONFIG, retriable = false, message = "bad")
+        transcriber.errorBySegment["cfg"] = AsrError(
+            AsrError.Kind.CONFIG,
+            retriable = false,
+            message = "bad",
+            scope = AsrError.Scope.WORKER_GLOBAL,
+        )
 
         val result = runWorker(deps(maxAttempts = 5))
 
-        // 当前生产在首个 AUTH 错误即返回终态失败，cfg 未被处理（CONFIG 覆盖见独立测试）。
-        assertTerminalFailure(result, kind = "AUTH", code = "asr")
-        assertEquals(listOf(eAuth.id to "AUTH"), queue.failed)
+        assertTerminalFailure(result, kind = "GLOBAL", code = "AUTH")
+        assertTrue(queue.failed.isEmpty())
         assertEquals(listOf("auth"), transcriber.calls)
+        assertTrue(queue.pending.filter { it.state == "PENDING" }.map { it.id }.containsAll(listOf(eAuth.id, eCfg.id)))
     }
 
     @Test
-    fun `CONFIG failure is terminal without retry`() = runBlocking {
+    fun `CONFIG failure is global without retry`() = runBlocking {
         val eCfg = saveReal("cfg", createdTs = 100L)
-        transcriber.errorBySegment["cfg"] = AsrError(AsrError.Kind.CONFIG, retriable = false, message = "bad")
+        transcriber.errorBySegment["cfg"] = AsrError(
+            AsrError.Kind.CONFIG,
+            retriable = false,
+            message = "bad",
+            scope = AsrError.Scope.WORKER_GLOBAL,
+        )
 
         val result = runWorker(deps(maxAttempts = 5))
 
-        assertTerminalFailure(result, kind = "CONFIG", code = "asr")
-        assertEquals(listOf(eCfg.id to "CONFIG"), queue.failed)
+        assertTerminalFailure(result, kind = "GLOBAL", code = "CONFIG")
+        assertTrue(queue.failed.isEmpty())
+        assertEquals("PENDING", queue.pending.single { it.id == eCfg.id }.state)
     }
 
     @Test
@@ -447,13 +459,112 @@ class PendingTranscriptionWorkerTest {
 
         val result = runWorker(deps())
 
-        // 契约要求 Missing/Corrupt 返回带 STORAGE kind 的终态 Failure；当前生产只
-        // markFailed 后继续（最终 success()），本断言如实保留期望并暴露该缺口（后续切片修）。
-        assertTerminalFailure(result, kind = "STORAGE")
+        assertEquals(ListenableWorker.Result.success(), result)
         assertEquals(listOf(missing.id to "STORAGE", corrupt.id to "STORAGE"), queue.failed)
         assertTrue(transcriber.calls.isEmpty())
         assertTrue(queue.deleted.isEmpty())
         assertTrue(queue.transcripts.isEmpty())
+        assertTrue(queue.pending.none { it.state == "PENDING" })
+    }
+
+    @Test
+    fun `missing item is terminal but later backlog continues and worker succeeds`() = runBlocking {
+        val missing = pendingRow(id = 100L, segmentId = "missing", createdTs = 100L)
+        (2..15).forEach { index ->
+            saveReal("missing-valid-$index", createdTs = index.toLong())
+            transcriber.textBySegment["missing-valid-$index"] = "text-$index"
+        }
+
+        val result = runWorker(deps(batchLimit = 10))
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals(listOf(missing.id to "STORAGE"), queue.failed)
+        assertEquals(14, queue.consumed.size)
+        assertEquals(14, queue.transcripts.size)
+        assertTrue(queue.pending.none { it.state == "PENDING" })
+    }
+
+    @Test
+    fun `corrupt item is terminal but later backlog continues and worker succeeds`() = runBlocking {
+        val corrupt = pendingRow(id = 200L, segmentId = "corrupt", createdTs = 100L)
+        saveCorruptFile("corrupt")
+        (2..15).forEach { index ->
+            saveReal("corrupt-valid-$index", createdTs = index.toLong())
+            transcriber.textBySegment["corrupt-valid-$index"] = "text-$index"
+        }
+
+        val result = runWorker(deps(batchLimit = 10))
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals(listOf(corrupt.id to "STORAGE"), queue.failed)
+        assertEquals(14, queue.consumed.size)
+        assertEquals(14, queue.transcripts.size)
+        assertTrue(queue.pending.none { it.state == "PENDING" })
+    }
+
+    @Test
+    fun `empty item terminal failure does not stop later valid rows`() = runBlocking {
+        val empty = saveReal("empty", createdTs = 100L)
+        val valid = saveReal("after-empty", createdTs = 200L)
+        transcriber.errorBySegment["empty"] = AsrError(AsrError.Kind.EMPTY, retriable = false, message = "empty")
+        transcriber.textBySegment["after-empty"] = "valid"
+
+        val result = runWorker(deps())
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals(listOf(empty.id to "EMPTY"), queue.failed)
+        assertEquals(listOf(valid.id), queue.consumed)
+        assertEquals(listOf("valid"), queue.transcripts.map { it.text })
+    }
+
+    @Test
+    fun `exhausted server item terminal failure does not stop later valid rows`() = runBlocking {
+        val exhausted = saveReal("exhausted", createdTs = 100L)
+        queue.pending[queue.pending.indexOfFirst { it.id == exhausted.id }] = exhausted.copy(attempts = 2)
+        val valid = saveReal("after-exhausted", createdTs = 200L)
+        transcriber.errorBySegment["exhausted"] = AsrError(AsrError.Kind.SERVER, retriable = true, message = "down")
+        transcriber.textBySegment["after-exhausted"] = "valid"
+
+        val result = runWorker(deps(maxAttempts = 3))
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals(listOf(exhausted.id to "SERVER"), queue.failed)
+        assertEquals(listOf(valid.id), queue.consumed)
+    }
+
+    @Test
+    fun `AUTH is a worker global failure and keeps all pending rows recoverable`() = runBlocking {
+        val auth = saveReal("auth-global", createdTs = 100L)
+        val later = saveReal("after-auth", createdTs = 200L)
+        transcriber.errorBySegment["auth-global"] = AsrError(AsrError.Kind.AUTH, retriable = false, message = "denied")
+        transcriber.textBySegment["after-auth"] = "must wait"
+
+        val result = runWorker(deps())
+
+        assertTerminalFailure(result, kind = "GLOBAL", code = "AUTH")
+        assertTrue(queue.failed.isEmpty())
+        assertEquals(listOf("auth-global"), transcriber.calls)
+        assertTrue(queue.pending.filter { it.state == "PENDING" }.map { it.id }.containsAll(listOf(auth.id, later.id)))
+    }
+
+    @Test
+    fun `CONFIG is a worker global failure and keeps all pending rows recoverable`() = runBlocking {
+        val config = saveReal("config-global", createdTs = 100L)
+        val later = saveReal("after-config", createdTs = 200L)
+        transcriber.errorBySegment["config-global"] = AsrError(
+            AsrError.Kind.CONFIG,
+            retriable = false,
+            message = "missing",
+            scope = AsrError.Scope.WORKER_GLOBAL,
+        )
+        transcriber.textBySegment["after-config"] = "must wait"
+
+        val result = runWorker(deps())
+
+        assertTerminalFailure(result, kind = "GLOBAL", code = "CONFIG")
+        assertTrue(queue.failed.isEmpty())
+        assertEquals(listOf("config-global"), transcriber.calls)
+        assertTrue(queue.pending.filter { it.state == "PENDING" }.map { it.id }.containsAll(listOf(config.id, later.id)))
     }
 
     @Test
@@ -575,7 +686,7 @@ class PendingTranscriptionWorkerTest {
 
         val result = runWorker(deps(maxAttempts = 3))
 
-        assertTerminalFailure(result, kind = "UNKNOWN", code = "asr")
+        assertEquals(ListenableWorker.Result.success(), result)
         assertEquals(listOf(e1.id to "UNKNOWN"), queue.failed)
     }
 
@@ -718,11 +829,11 @@ class PendingTranscriptionWorkerTest {
             ).build()
             val result = worker.doWork()
 
-            assertTerminalFailure(result, kind = "CONFIG", code = "asr")
+            assertTerminalFailure(result, kind = "GLOBAL", code = "CONFIG")
             val row = db.pendingAudioDao().getAll().single { it.id == insertedId }
-            assertEquals("FAILED", row.state)
-            assertEquals(1, row.attempts)
-            assertEquals("asr", row.lastError)
+            assertEquals("PENDING", row.state)
+            assertEquals(0, row.attempts)
+            assertEquals(null, row.lastError)
         } finally {
             db.pendingAudioDao().deleteForCourse(991L)
             file.delete()

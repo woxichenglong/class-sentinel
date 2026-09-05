@@ -148,6 +148,7 @@ private class ConfigFailureSegmentEngine(
                     kind = AsrError.Kind.CONFIG,
                     retriable = false,
                     message = "ASR is not configured",
+                    scope = AsrError.Scope.WORKER_GLOBAL,
                 ),
             ),
         )
@@ -166,7 +167,16 @@ private class XunfeiSegmentSpeechEngine(
         return try {
             val pcm = pcmFromWav(segment.bytes)
             if (pcm.isEmpty()) {
-                Result.failure(AsrException(AsrError(AsrError.Kind.CONFIG, retriable = false, message = "invalid wav")))
+                Result.failure(
+                    AsrException(
+                        AsrError(
+                            AsrError.Kind.CONFIG,
+                            retriable = false,
+                            message = "invalid wav",
+                            scope = AsrError.Scope.ITEM,
+                        ),
+                    ),
+                )
             } else {
                 val text = delegate.transcribe(flowOf(pcm)).toList().joinToString("").trim()
                 if (text.isBlank()) {
