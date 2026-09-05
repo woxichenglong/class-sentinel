@@ -70,6 +70,17 @@ class NameMatcherTest {
     }
 
     @Test
+    fun `configured exact name can be detected without rollcall context`() {
+        val matcher = NameMatcher(names)
+
+        val hit = matcher.detectExactConfiguredName("张伟，为什么 CAPM 成立")
+
+        assertEquals("张伟", hit?.name)
+        assertEquals("张伟", hit?.matched)
+        assertTrue(hit?.isExact == true)
+    }
+
+    @Test
     fun `unrelated name not hit`() {
         assertNull(NameMatcher(names).detect("李华，你来回答", Sensitivity.LOOSE))
     }

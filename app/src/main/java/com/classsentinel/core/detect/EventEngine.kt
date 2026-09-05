@@ -119,6 +119,7 @@ class EventEngine(
         // the persisted event/answer, not evidence that an old name targets this new sentence.
         val question = QuestionDetector.detectAnswerable(final.text, sens.questionWordLevel)
         val nameHit = nameMatcher.detect(final.text, sens)
+        val exactNameHit = nameMatcher.detectExactConfiguredName(final.text)
 
         // A confirming final commits the provisional alert to the authoritative suppression clock.
         // A rewritten final without a name does not, so a false partial cannot suppress later calls.
@@ -127,7 +128,7 @@ class EventEngine(
         }
 
         // 明确问当前学生：姓名命中会把开放题提升为 DIRECT；高置信度“你”由 detector 自己识别。
-        if (question != null && (question.scope == EventScope.DIRECT || nameHit != null)) {
+        if (question != null && (question.scope == EventScope.DIRECT || nameHit != null || exactNameHit != null)) {
             if (canEmitQuestion(EventScope.DIRECT, final.text, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
@@ -194,7 +195,7 @@ class EventEngine(
         val fingerprint = normalizeQuestion(text)
         val lastQuestion = if (scope == EventScope.DIRECT) lastDirectQuestion else lastClassOpenQuestion
         if (lastQuestion != null && ts - lastQuestion.ts < suppressionMs &&
-            questionSimilarity(lastQuestion.fingerprint, fingerprint) >= QUESTION_SIMILARITY_THRESHOLD
+            lastQuestion.fingerprint == fingerprint
         ) {
             return false
         }
@@ -207,27 +208,9 @@ class EventEngine(
     }
 
     private fun normalizeQuestion(text: String): String =
-        text.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
-
-    private fun questionSimilarity(left: String, right: String): Double {
-        if (left == right) return 1.0
-        if (left.isEmpty() || right.isEmpty()) return 0.0
-        val previous = IntArray(right.length + 1) { it }
-        val current = IntArray(right.length + 1)
-        for (leftIndex in left.indices) {
-            current[0] = leftIndex + 1
-            for (rightIndex in right.indices) {
-                val substitutionCost = if (left[leftIndex] == right[rightIndex]) 0 else 1
-                current[rightIndex + 1] = minOf(
-                    current[rightIndex] + 1,
-                    previous[rightIndex + 1] + 1,
-                    previous[rightIndex] + substitutionCost,
-                )
-            }
-            previous.indices.forEach { index -> previous[index] = current[index] }
-        }
-        return 1.0 - previous[right.length].toDouble() / maxOf(left.length, right.length)
-    }
+        text.lowercase(Locale.ROOT)
+            .filter(Char::isLetterOrDigit)
+            .trimEnd { it in QUESTION_TAIL_PARTICLES }
 
     private data class LastQuestion(
         val fingerprint: String,
@@ -235,6 +218,6 @@ class EventEngine(
     )
 
     private companion object {
-        const val QUESTION_SIMILARITY_THRESHOLD = 0.85
+        const val QUESTION_TAIL_PARTICLES = "吗呢吧啊呀"
     }
 }

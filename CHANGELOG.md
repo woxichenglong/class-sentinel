@@ -19,15 +19,16 @@
 - 隔离实时副作用：姓名变体 gate 失败后继续检查完整姓名；AlertCoordinator 按通道隔离普通异常；transcript/event Room 写入失败不阻断当前提醒，QUESTION 只有拿到 eventId 才提交 LLM。
 - 模型启动增加 readiness gate：完整 hash 在 IO dispatcher 执行并带 stat-signature cache；未 ready 时先准备模型，准备失败不发 live START；controller handle 的 false start 结果会进入 service failure callback。
 - 收口所有 START 入口：Quick Settings Tile 改用与 Home 相同的 `LocalListenStartPreflight`，只读取 selected local profile 和模型 readiness，不再以 SiliconFlow/讯飞 key 判定本地 live 是否可用。
-- 收紧问题抑制：每个 question scope 记录归一化 fingerprint 和时间；窗口内只抑制相同或高度相似问题，不同问题立即进入事件/提醒路径。
+- 收紧问题抑制：每个 question scope 记录归一化 fingerprint 和时间；窗口内只抑制相同 normalized fingerprint，不同问题立即进入事件/提醒路径，避免整句 Levenshtein 误杀关键术语不同的问题。
+- 补齐姓名定向问题：标准模式下当前 Final 的 exact configured name 可作为 answerable question 的 DIRECT targeting evidence，不放宽普通裸姓名 ROLLCALL gate。
 
 ### 验证
 
-- Tile/question focused regression：3 个测试套件、26 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：90 个测试类、481 个用例，失败 0、错误 0、跳过 0。
+- Detector/name focused regression：3 个测试套件、47 个用例，失败 0、错误 0、跳过 0。
+- JVM 全量：90 个测试类、484 个用例，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
 - 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；日常选择只开放 14M/small，X-ASR 留在 evaluation/debug catalog；X-ASR live endpoint-on 与官方 endpoint-off 由独立 config mode 区分。
-- 本轮 Debug APK：223,657,379 bytes；SHA-256 为 `40621b1d79233accb0e5a1d35a0506aaf675e4a3330a8f5c52f6007cbb92c274`。
+- 本轮 Debug APK：223,657,379 bytes；SHA-256 为 `a2e4fa9051a368356628526c605815f6f9612ed46ccc44b5c3f89eb81178fe43`。
 
 ### 模型实验门
 

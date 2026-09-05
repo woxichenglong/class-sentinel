@@ -101,7 +101,7 @@ AudioStreamer
 - `[已完成]` `ModelProfile`：14M baseline、small bilingual、X-ASR 480/960 的 artifact、SHA-256/size、recognizer 配置、live/official endpoint 策略、能力声明和 evaluation/daily 目录集中管理。
 - `[已完成]` `SherpaModelInstaller`：按 profile 校验目标文件 hash/size，使用 profile marker；有效缓存不重读 APK assets，同尺寸损坏文件会被替换。
 - `[已完成]` `SherpaOnnxRecognizerFactory`：从 profile 映射 artifact 路径、provider、modelType、modelingUnit、decode、endpoint、hotword/rule 参数；显式区分 live 与 official deployment endpoint mode。
-- `[已完成]` 事件检测状态：Partial provisional rollcall 不推进 confirmed suppression；CLASS_OPEN/DIRECT 使用独立 question clock，并按 scope + fingerprint 只抑制相同/高度相似问题；开放式 marker 优先于 binary“吗”；当前 Final 只用当前句分类，滚动窗口仅作为 context。
+- `[已完成]` 事件检测状态：Partial provisional rollcall 不推进 confirmed suppression；CLASS_OPEN/DIRECT 使用独立 question clock，并按 scope + normalized fingerprint 只抑制相同问题；开放式 marker 优先于 binary“吗”；当前 Final 只用当前句分类，滚动窗口仅作为 context。
 - `[已完成]` `NameMatcher` 与提醒副作用：exact variant gate 失败会继续检查完整姓名；AlertCoordinator 隔离普通通道异常且保留取消传播；Room transcript/event 写入为 best-effort，实时 alert 不依赖写入成功，QUESTION/LLM 仅在 eventId 存在时执行。
 - `[已完成]` `ListenSessionHandle.start(): Boolean` 与 readiness gate：false 启动结果传播到 service failure callback；模型 readiness hash 在 IO dispatcher 执行并带 stat-signature cache，未准备成功前不发 live START。
 - `[已完成]` `LocalListenStartPreflight`：Home 与 Quick Settings Tile 共用 selected local profile、readiness/ensureReady 和本地 asset 路径；云 ASR credential 不再参与 live START 资格。
@@ -113,7 +113,7 @@ AudioStreamer
 - `[已完成]` X-ASR 官方 Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 480/960 两个 deployment artifact、许可证、配置和四文件 size/SHA-256；已加入 `X_ASR_480`/`X_ASR_960` evaluation profile，live endpoint-on、official deployment endpoint-off，未打入 APK，需先通过 debug importer 准备；live native endpoint-on smoke 仍待完成。
 - `[已完成]` 点名 Partial fast path：`EventEngine.processPartialRollcall()` 仅接受文本 exact 且 `score == 1.0`，同 utterance 去重；Partial 只触发 ROLLCALL alert，不写 DB/不触发 QUESTION/LLM，provisional 不推进 confirmed suppression，Final 继续权威落库并跳过已提前提醒的重复 ROLLCALL alert。
 - `[已完成]` endpoint-off 同 utteranceId 限制和 endpoint-on 两句 reset smoke 已由 JVM seam 回归锁定；真实 X-ASR native endpoint-on 行为仍需 host/目标设备验证，未据此开放日常选择。
-- `[已完成]` 本轮 Tile/question focused 为 3 个套件、26 个用例；full JVM 为 90 个测试类、481 个用例；均为 0 failures/errors/skipped。上述 JVM seam 不替代真实 X-ASR native endpoint、K80 麦克风、功耗和 MIUI 验收。
+- `[已完成]` 本轮 detector/name focused 为 3 个套件、47 个用例；full JVM 为 90 个测试类、484 个用例；均为 0 failures/errors/skipped。上述 JVM seam 不替代真实 X-ASR native endpoint、K80 麦克风、功耗和 MIUI 验收。
 - `[部分完成]` 用同一官方 `test_wavs/0.wav` 完成 A/B/C/D 的 1-clip FAST smoke；另有 `proxy-finance-v1` 的 30 scripts/60 WAV，B/C/D FAST 及 C/D quiet/classroom REALTIME 证据。结果只作流程/候选筛选证据，不能替代真实金融课堂 corpus 或 K80 测量。
 - `[待补]` 固定金融课堂 corpus、reference transcript、扩大样本后的 FAST 结果、warm-up/交错顺序记录和 K80 E2E 采集。
 

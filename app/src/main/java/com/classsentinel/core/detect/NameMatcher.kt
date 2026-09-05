@@ -62,6 +62,21 @@ class NameMatcher private constructor(
         return best?.let { contextGate(segment, it, sensitivity) }
     }
 
+    /** Exact configured-name evidence for an already-recognized question; no rollcall context gate. */
+    fun detectExactConfiguredName(segment: String): Hit? {
+        if (segment.length < 2 || namesProvider().isEmpty()) return null
+        if (excludeWords.any { segment.contains(it) }) return null
+
+        for (entry in namesProvider()) {
+            for (variant in entry.variants + entry.display) {
+                if (variant.isEmpty() || !segment.contains(variant)) continue
+                if (variant.length == 1 && !isCallBoundary(segment, variant)) continue
+                return Hit(entry.display, variant, 1.0, isExact = true)
+            }
+        }
+        return null
+    }
+
     private fun contextGate(segment: String, hit: Hit, sensitivity: Sensitivity): Hit? {
         if (sensitivity.contextRequired && contextWords.none { segment.contains(it) }) return null
         // 单字符命中必须处于点名边界，否则「王国来回答/明天来回答」里的 王/明 会被误判为点名

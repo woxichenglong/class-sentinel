@@ -131,6 +131,36 @@ class EventEngineTest {
     }
 
     @Test
+    fun `small lexical change with different key term is not treated as duplicate`() {
+        val eng = engine()
+
+        assertNotNull(
+            eng.processFinal(
+                FinalTranscript(1, "为什么第一种方法成立", 0L, 1_000L),
+                ts = 1_000,
+            ),
+        )
+
+        val second = eng.processFinal(
+            FinalTranscript(2, "为什么第二种方法成立", 1_000L, 31_000L),
+            ts = 31_000,
+        )
+
+        assertEquals(EventType.QUESTION, second?.type)
+    }
+
+    @Test
+    fun `exact name plus open question is direct at standard sensitivity`() {
+        val event = engine().processFinal(
+            FinalTranscript(1, "张伟，为什么 CAPM 成立", 0L, 1_000L),
+            ts = 1_000,
+        )
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.DIRECT, event?.scope)
+    }
+
+    @Test
     fun `sensitivity hot update takes effect`() {
         val flow = MutableStateFlow<Sensitivity>(Sensitivity.STRICT)
         val eng = EventEngine(NameMatcher(listOf(NameEntry("张伟", emptyList()))), flow)
