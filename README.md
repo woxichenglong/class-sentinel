@@ -11,13 +11,16 @@
 
 | 检查 | 命令/依据 | 结果 |
 |---|---|---|
-| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 90 个测试类、502 个用例；失败 0、错误 0、跳过 0 |
-| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 已生成，223,657,379 bytes；SHA-256：`8601c32c8b138af369f2493ecf3edfa8b6fbc039c0b6bd022c26d2cfae1f00d7` |
+| JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 通过；suite/用例数量以 `app/build/test-results/testDebugUnitTest/TEST-*.xml` 即时汇总为准 |
+| Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 的大小用 `stat`、SHA-256 用 `sha256sum` 即时读取，不在 README 固定 |
 | 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 16 个，消费者 key 16 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
-| Room | schema v3 + `Migration1To2Test`/`Migration2To3Test` | v1/v2 数据保留，课程/转写元数据/待处理音频/学习产物表存在 |
+| Room | `AppDatabase` version 5 + `MIGRATION_1_2` / `MIGRATION_2_3` / `MIGRATION_3_4` / `MIGRATION_4_5` | v1→v5 migration 与课程/转写元数据/待处理音频/学习产物表保持一致 |
 | Android Lint | `./gradlew :app:lintDebug --rerun-tasks` | 文本报告为 `No issues found.` |
-| K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 旧版 APK 曾通过；本次新增模型后的 APK 尚未重装/实测，当前 ADB 无在线设备 |
+| 模型 catalog | `ModelProfiles.DAILY_SELECTABLE` / `EVALUATION_CATALOG` | 日常 `sherpa-zh-14m`、`sherpa-small-bilingual-zh-en`；`x-asr-480` / `x-asr-960` 仅 evaluation/debug，数量以源码 catalog 为准 |
+| 即时回答 | `AnswerService` → `AnswerResultHandler` → `LiveStreamBus` / system notification | 流式状态在 App 内答案卡更新，终态答案按请求类型决定是否写 Room |
+| CI | `.github/workflows/android-ci.yml` | GitHub Actions workflow 名为 `Android CI`，保留 unit test、lint、debug build |
+| K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 本轮未执行；当前无在线设备，JVM/APK/CI 不等同于真机验收 |
 
 密钥扫描的边界也已记录：生产代码没有实际凭证命中；当前测试代码包含讯飞公开签名示例和合成测试 key，不能当作生产密钥。
 
@@ -28,7 +31,7 @@
 ### 听讲、分段与 ASR
 
 - `AudioRecord` 以 16 kHz 单声道 PCM 采集；实时主链经 `StreamingSpeechEngine` 进入本地 sherpa-onnx 连续流式识别，保留 decoder 状态，不由 VAD 切成 HTTP 请求。
-- `StreamingAsrEvent` 区分可替换的 `Partial` 和权威的 `Final`；只有 `Final` 进入事件检测、历史和 LLM，失败事件只携带封闭的安全错误类别。
+- `StreamingAsrEvent` 区分可替换的 `Partial`、空 endpoint/flush 的 `UtteranceEnded` 和权威的 `Final`；只有非空 `Final` 进入事件检测、历史和 LLM，失败事件只携带封闭的安全错误类别。
 - 旧 `VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和讯飞适配器暂留在 WAV 导入/pending recovery 边界；它们不作为实时课堂链路的 fallback。
 - 日常本地模型可在设置页选择 14M baseline 或 small bilingual；默认仍为 14M。X-ASR 480/960 保留在 evaluation/debug catalog，需先通过 debug importer 准备并完成 live endpoint-on 真机 smoke 后才进入日常选择；X-ASR 大文件不打包。切换只对下一次监听生效。
 - 点名提醒支持 Partial exact-name fast path：仅文本精确命中且 `score=1.0` 的姓名会立即提醒；Partial 不落库、不触发 QUESTION/LLM，同一 utterance 的 Final 仍负责权威落库并抑制重复提醒；provisional 不推进确认抑制时钟。
@@ -42,11 +45,11 @@
 - 同一时刻的重复 START 只创建一个课程/管线；STOP 会先停止管线、等待必要的持久化、完成课程收尾，再请求停止服务。
 - 前台通知包含“停止听讲”动作，并显示已听时长、当前引擎和待处理段数；通知正文不放课堂原文或 AI 答案。
 - Home/Live 从权威 `PipelineState` 读取 Listening、Recovering、Stopping 等状态，不另维护一个容易过期的 listening Boolean。
-- 浮窗在点名/提问模式切换和新会话时清理旧内容；没有悬浮窗权限时，应用会给出可见反馈，但答案卡不会显示。
+- 答案提醒使用系统通知；点击通知进入对应的 App 内答案卡，详细课堂内容在应用内查看。
 
 ### Room 历史、总结与重点标记
 
-- Room schema v3 保存课程状态/总结状态、转写片段偏移/标记元数据、`pending_audio_segments` 和 `study_artifacts`；v1/v2 旧课程和旧转写可通过 migration 保留。
+- Room schema v5 保存课程状态/总结状态、转写片段偏移/标记元数据、`pending_audio_segments` 和 `study_artifacts`；v1→v5 migration 保留旧课程和旧转写。
 - 课程历史支持按保留天数清理已结束课程，也支持确认后清空课程、事件、转写和待处理音频记录；正在进行的课程不会被自动保留清理删除。
 - 总结可手动生成/重试；打开 `autoSummary` 后，课程收尾时仅在有转写内容且 AI 配置完整的条件下提交带 `CONNECTED` 约束的任务，网络可用后执行。空转写不会调用 LLM，状态为 `NONE/QUEUED/RUNNING/SUCCEEDED/FAILED` 并持久化。
 - 内置默认四段式、考试复习、研讨课、实验课模板，也支持长度受限的自定义要求。总结正文在 UI 中按二级 Markdown 标题拆成卡片，失败只显示安全错误类别。
@@ -120,15 +123,15 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 ## Android、MIUI 与当前限制
 
 - 要求 Android 8.0（API 26）或更高；compileSdk/targetSdk 为 35，`versionName` 为 `0.3.0`、`versionCode` 为 `3`，源码构建使用 JDK 17，Gradle wrapper 为 8.7。
-- Android 13+ 的通知权限、麦克风权限、悬浮窗权限需要用户在系统设置授权。没有悬浮窗权限时，监听和转写路径可以继续，但浮窗回答不会出现。
-- MIUI/其他国产 ROM 可能需要把本应用电池策略设为“无限制”、允许自启动，并手动开启悬浮窗；否则后台服务可能被系统暂停。
-- K80 已完成最终 APK 安装回读、冷启动、权限/AppOps 和 UI hierarchy smoke；这不等于 MIUI 业务验收。锁屏、全屏提醒、后台保活、真实 ASR 准确率、WAV 选择器、回放、Tile 点击和断网重连仍是后续设备门。
+- Android 13+ 的通知权限、麦克风权限需要用户在系统设置授权；答案通过系统通知和 App 内答案卡呈现。
+- MIUI/其他国产 ROM 可能需要把本应用电池策略设为“无限制”、允许自启动，否则后台服务可能被系统暂停。
+- 当前没有在线 K80 设备；安装回读、冷启动、权限/AppOps、锁屏通知、后台保活、真实 ASR 准确率、WAV 选择器、回放、Tile 点击和断网重连仍是后续设备门。
 
 ## 快速开始
 
 ### 方式一：下载 APK
 
-从 [Releases](../../releases) 下载 `app-debug.apk`。如果 Releases 没有产物，请使用源码构建；当前质量门生成的 APK 仅是 debug 构建，不是设备验收证明。
+从 [Releases](../../releases) 下载发布产物；debug APK 只用于测试，不是设备验收证明。当前尚未把 debug 构建当作 release 下载物。
 
 ### 方式二：源码构建
 
@@ -154,7 +157,7 @@ Windows 命令提示符或 PowerShell 可将 `./gradlew` 替换为 `gradlew.bat`
 ### 首次使用
 
 1. 在引导中录入展示姓名；可称呼昵称用于定向提问，ASR 变体仅用于识别容错。
-2. 授予麦克风、通知权限；需要浮窗回答时另外授予悬浮窗权限。
+2. 授予麦克风、通知权限；答案通过系统通知和 App 内答案卡显示。
 3. 在 AI 设置中选择预设并填写 AI key；ASR key 在“语音”分组单独填写。
 4. 在“本地转写”中选择日常模型；X-ASR 480/960 目前仅供 evaluation/debug，需先导入对应四文件并完成 live endpoint-on smoke。
 5. 先用自检页确认权限和配置，再开始听讲。
@@ -173,7 +176,7 @@ app/src/main/java/com/classsentinel/
 ├── core/summary     # 总结生成与模板
 ├── data             # Room、DataStore、迁移、历史与设置仓库
 ├── security         # SecretStore 与 Android Keystore 实现
-├── service          # 前台服务、会话生命周期、浮窗、实时状态总线
+├── service          # 前台服务、会话生命周期、实时状态总线
 ├── tile             # Quick Settings Tile
 ├── ui                # Compose 页面和状态映射
 └── worker            # 待处理音频、总结、历史清理 Worker
@@ -189,7 +192,7 @@ app/src/main/java/com/classsentinel/
 
 ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a user-selectable local sherpa-onnx streaming ASR profile, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate (502 tests across 90 test classes), a clean Android Lint report, and a successful debug APK build. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions and rollcall context per name occurrence rather than globally. This is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate, a clean Android Lint report, and a successful debug APK build. Exact suite/test totals are derived from the generated XML reports rather than fixed in this document. Room schema version 5 uses the checked-in v1→v5 migrations. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions and rollcall context per name occurrence rather than globally. Answer updates use the system notification plus an in-app answer card; this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

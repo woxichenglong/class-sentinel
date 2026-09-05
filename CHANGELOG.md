@@ -16,7 +16,8 @@
 - 修复点名提醒时机：新增只针对 ROLLCALL 的 Partial exact-name fast path；同一 utterance 只提前提醒一次，Final 仍权威落库，已提前提醒的最终 ROLLCALL 不重复 alert，QUESTION/LLM 仍保持 Final-only。
 - 收紧点名时序：Partial 只保留 provisional 状态，confirmed suppression 只由 Final/legacy authoritative path 推进；X-ASR live 使用 endpoint-on，官方 deployment/smoke 保留 endpoint-off 独立模式。
 - 修复事件状态机边界：CLASS_OPEN 与 DIRECT 使用独立 question suppression；开放式“为什么/解释”优先于尾部“吗”，Question level 与 STRICT/STANDARD/LOOSE 语义一致；FinalWindow 不再用历史姓名提升当前句 scope。
-- 隔离实时副作用：姓名变体 gate 失败后继续检查完整姓名；AlertCoordinator 按通道隔离普通异常；transcript/event Room 写入失败不阻断当前提醒，QUESTION 只有拿到 eventId 才提交 LLM。
+- 隔离实时副作用：姓名变体 gate 失败后继续检查完整姓名；AlertCoordinator 按通道隔离普通异常；transcript/event Room 写入失败不阻断当前提醒，QUESTION 在没有 eventId 时仍进入显式 transient/in-memory answer seam，不伪造 Room ID。
+- 收敛即时回答状态：`streamOutput=true` 发布累积 `Streaming`，只在终态成功时写 Room；信息不足使用严格 sentinel，LLM 错误沿安全类别传递，Room 历史写失败会记录固定安全码并在当前课程显示降级提示。
 - 模型启动增加 readiness gate：完整 hash 在 IO dispatcher 执行并带 stat-signature cache；未 ready 时先准备模型，准备失败不发 live START；controller handle 的 false start 结果会进入 service failure callback。
 - 收口所有 START 入口：Quick Settings Tile 改用与 Home 相同的 `LocalListenStartPreflight`，只读取 selected local profile 和模型 readiness，不再以 SiliconFlow/讯飞 key 判定本地 live 是否可用。
 - 收紧问题抑制：每个 question scope 记录归一化 fingerprint 和时间；窗口内只抑制相同 normalized fingerprint，不同问题立即进入事件/提醒路径，避免整句 Levenshtein 误杀关键术语不同的问题。
@@ -28,11 +29,11 @@
 
 ### 验证
 
-- Detector/name focused regression：2 个测试套件、51 个用例，失败 0、错误 0、跳过 0。
-- JVM 全量：90 个测试类、502 个用例，失败 0、错误 0、跳过 0。
+- Detector/name focused regression：结果以对应 Gradle/XML 报告即时汇总，失败 0、错误 0、跳过 0。
+- JVM 全量：结果以 `app/build/test-results/testDebugUnitTest/TEST-*.xml` 即时汇总，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
 - 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；日常选择只开放 14M/small，X-ASR 留在 evaluation/debug catalog；X-ASR live endpoint-on 与官方 endpoint-off 由独立 config mode 区分。
-- 本轮 Debug APK：223,657,379 bytes；SHA-256 为 `8601c32c8b138af369f2493ecf3edfa8b6fbc039c0b6bd022c26d2cfae1f00d7`。
+- Debug APK 的大小和 SHA-256 只针对每次实际生成的文件用 `stat` / `sha256sum` 读取，不固定写入 changelog。
 
 ### 模型实验门
 
@@ -49,7 +50,7 @@
 - 让 ListenService 会话启停幂等：重复 START 不重复创建课程/管线；STOP 先停止管线并完成持久化收尾，再请求停止服务。
 - 前台通知增加“停止听讲”动作，并显示已听时长、ASR 引擎和待处理片段数量；通知不展示课堂原文或 AI 答案。
 - Home/Live 改用权威 `PipelineState`，覆盖 Listening、Recovering、Stopping 和 Error 状态，避免 Activity 重建后状态漂移。
-- Room v3 增加课程状态、总结状态、转写片段偏移/标记元数据、`pending_audio_segments` 和 `study_artifacts`；v1/v2 课程及转写数据由 migration 保留。
+- Room v5 通过 v1→v5 migrations 保存课程状态、总结状态、转写片段偏移/标记元数据、`pending_audio_segments` 和 `study_artifacts`；旧课程及转写数据由 migration 保留。
 - 增加失败片段的应用私有存储和 WorkManager 恢复队列：只保存未成功转写的片段，使用 `CONNECTED` 约束、指数退避和有界重试。
 - 总结支持自动排队（默认关闭）、手动生成/重试、四种内置模板和长度受限的自定义要求；总结状态和安全错误码持久化。
 - 增加转写句子“标记最近一句”及课程详情的“全部/已标记”筛选，并校验课程 ID 防止跨课程更新。
@@ -75,16 +76,16 @@
 
 以下命令均在父对话中直接执行，并使用 `--rerun-tasks` 排除 Gradle 缓存假绿：
 
-- `./gradlew :app:testDebugUnitTest --rerun-tasks`：`BUILD SUCCESSFUL`；62 个测试套件、344 个测试用例，失败 0、错误 0、跳过 0。它证明当前 JVM 代码和集成测试整体通过，不证明真机音频或厂商后台策略。
-- `./gradlew :app:assembleDebug --rerun-tasks`：`BUILD SUCCESSFUL`；生成 `app/build/outputs/apk/debug/app-debug.apk`（18,351,207 bytes），SHA-256 为 `490621b24b5ff00d7ccf931fb01255f43df6929168a543202c6a531ac17a8ea0`。它证明当前源码可打出 debug APK，不证明已完成安装/设备验收。
-- 静态检查：设置消费者矩阵 26/26 精确匹配；Room schema v3、`Migrations.kt` 和 v1→v2/v2→v3 migration 测试存在；生产源码没有实际凭证命中。
+- `./gradlew :app:testDebugUnitTest --rerun-tasks`：`BUILD SUCCESSFUL`；suite/用例数量从 `app/build/test-results/testDebugUnitTest/TEST-*.xml` 即时汇总。它证明当前 JVM 代码和集成测试整体通过，不证明真机音频或厂商后台策略。
+- `./gradlew :app:assembleDebug --rerun-tasks`：`BUILD SUCCESSFUL`；生成 `app/build/outputs/apk/debug/app-debug.apk`，大小与 SHA-256 用 `stat` / `sha256sum` 即时读取。它证明当前源码可打出 debug APK，不证明已完成安装/设备验收。
+- 静态检查：设置消费者矩阵与 `SettingConsumerMatrix` 以源码测试为准；Room schema v5、`Migrations.kt` 和 v1→v5 migration 测试存在；生产源码没有实际凭证命中。
 - `./gradlew :app:lintDebug --rerun-tasks`：`BUILD SUCCESSFUL`；文本报告为 `No issues found.`。它证明当前 Android lint 未发现 error/warning，不替代真机业务验收。
-- K80 smoke：设备 `24117RK2CC`、Android 16/API 36；最终 APK 安装后 `versionName=0.3.0`、`versionCode=3`，拉回 base.apk 与本地 SHA-256 一致；`MainActivity` 冷启动约 977 ms，权限/AppOps 读取正常，无 app 崩溃/ANR。它证明安装与冷启动边界，不证明后台监听、Tile 点击或断网恢复。
+- K80 smoke：当前无在线设备，本轮未执行。它不能证明安装、冷启动、后台监听、Tile 点击或断网恢复。
 - 密钥扫描的已知基线例外仅是测试代码中的讯飞公开签名示例和合成测试 key；它们不是生产凭证，历史扫描仍会看到公开测试向量。
 
 ### 尚未完成的设备与发布验收
 
-- K80 已完成最终 APK 安装回读、冷启动、权限/AppOps 和 UI hierarchy smoke；MIUI 悬浮窗、电池策略、自启动、通知/锁屏/全屏提醒、长时间后台监听、WAV 文件选择器、音频回放、Tile 点击和断网重连仍未认证。
+- 当前无在线 K80；APK 安装回读、冷启动、权限/AppOps、通知/锁屏、后台监听、WAV 文件选择器、音频回放、Tile 点击和断网重连仍未认证。
 - 未把第三方 ASR/LLM 的真实准确率、配额或网络连通性写成保证。
 - 闪卡、小测、双语复习、音频回放、WAV 导入和 Quick Settings Tile 已纳入 v0.3.0 源码范围，并有 JVM 合约测试；设备行为仍待验收。
-- 本次没有 commit 或 push；当前工作树中的前序任务改动仍需在后续提交前单独审阅。
+- 本文件不固定记录 commit/push 状态；以 Git 历史、远端分支和 Actions run 的实时回读为准。
