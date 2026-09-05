@@ -13,8 +13,8 @@ class AnswerGenerationCoordinatorTest {
 
     @Test
     fun `same event id shares in flight job and retry keeps the id without a second insertion`() = runTest {
-        val requests = mutableListOf<Long>()
-        val results = mutableListOf<Pair<Long, AnswerResult>>()
+        val requests = mutableListOf<Long?>()
+        val results = mutableListOf<Pair<Long?, AnswerResult>>()
         val request = AnswerRequest(
             eventId = 42L,
             question = "问题",
@@ -89,5 +89,41 @@ class AnswerGenerationCoordinatorTest {
         )?.join()
 
         assertEquals(listOf(AnswerResult.Failed("AUTH")), results)
+    }
+
+    @Test
+    fun `transient request key deduplicates generation without a database event id`() = runTest {
+        var generationCalls = 0
+        val results = mutableListOf<AnswerResult>()
+        val request = AnswerRequest(
+            eventId = null,
+            requestKey = "transient-1",
+            question = "问题",
+            context = "上下文",
+        )
+        val coordinator = AnswerGenerationCoordinator(
+            scope = this,
+            generate = {
+                generationCalls++
+                flowOf("临时答案")
+            },
+            onResult = { _, result -> results += result },
+        )
+
+        val first = coordinator.submit(request)
+        val duplicate = coordinator.submit(request)
+        advanceUntilIdle()
+
+        assertSame(first, duplicate)
+        assertEquals(1, generationCalls)
+        assertEquals(null, request.eventId)
+        assertEquals(
+            listOf(
+                AnswerResult.Generating,
+                AnswerResult.Streaming("临时答案"),
+                AnswerResult.Succeeded("临时答案"),
+            ),
+            results,
+        )
     }
 }

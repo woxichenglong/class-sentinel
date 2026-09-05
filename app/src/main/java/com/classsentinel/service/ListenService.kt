@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 听讲前台服务：常驻通知「正在听讲」，麦克风采集 → 本地 sherpa-onnx 连续 ASR
@@ -53,6 +54,8 @@ class ListenService : Service() {
     private var serviceSession: ListenServiceSession? = null
     /** 前台通知状态收集协程；随服务销毁一并取消 */
     private var notificationJob: Job? = null
+    /** Monotonic in-memory identity for answers whose event insert did not return a DB id. */
+    private val transientAnswerSequence = AtomicLong(0L)
     private val answerResultHandler = AnswerResultHandler(
         persistAnswer = { eventId, answer ->
             withContext(Dispatchers.IO) {
@@ -68,7 +71,7 @@ class ListenService : Service() {
                 result = result,
             )
             // Streaming 只更新进程内 UI，避免每个 delta 都刷新系统通知。
-            if (result !is AnswerResult.Streaming) {
+            if (request.eventId != null && result !is AnswerResult.Streaming) {
                 publishAnswerNotification(request, result)
             }
         },
@@ -179,7 +182,8 @@ class ListenService : Service() {
 
     /** LLM 流式答题：coordinator 去重，结果更新原 event ID 与答案通知。 */
     private fun launchAnswer(event: ClassEvent, eventId: Long?) {
-        val id = eventId ?: return
+        val requestKey = eventId?.let { "event:$it" }
+            ?: "transient:${transientAnswerSequence.incrementAndGet()}"
         scope.launch {
             val repo = SettingsRepositoryHolder.get(this@ListenService)
             val ai = try {
@@ -192,7 +196,8 @@ class ListenService : Service() {
             if (ai == null || ai.apiKey.isBlank()) {
                 handleAnswerResult(
                     AnswerRequest(
-                        eventId = id,
+                        eventId = eventId,
+                        requestKey = requestKey,
                         question = event.triggerText,
                         context = event.context,
                     ),
@@ -206,7 +211,8 @@ class ListenService : Service() {
             val streamOutput = runCatching { repo.streamOutputFlow.first() }.getOrDefault(true)
             answerCoordinator.submit(
                 AnswerRequest(
-                    eventId = id,
+                    eventId = eventId,
+                    requestKey = requestKey,
                     question = event.triggerText,
                     context = event.context,
                     style = style,
@@ -222,6 +228,7 @@ class ListenService : Service() {
         answerResultHandler.handle(request, result)
 
     private fun publishAnswerNotification(request: AnswerRequest, result: AnswerResult) {
+        val eventId = request.eventId ?: return
         val answer = when (result) {
             AnswerResult.Generating -> "生成中…"
             is AnswerResult.Streaming -> result.text
@@ -234,7 +241,7 @@ class ListenService : Service() {
         }
         val notification = AnswerNotificationBuilder.build(
             context = this,
-            eventId = request.eventId,
+            eventId = eventId,
             question = request.question,
             answer = answer,
             contextSummary = request.context,

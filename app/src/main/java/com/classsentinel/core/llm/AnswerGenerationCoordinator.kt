@@ -8,20 +8,25 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-/** Request identity and prompt data for one already-persisted question event. */
+/** Request identity and prompt data for a persisted or transient question answer. */
 class AnswerRequest(
-    val eventId: Long,
+    val eventId: Long?,
     val question: String,
     val context: String,
     val style: AnswerStyle = AnswerStyle.TERSENESS,
     val llmConfig: LlmConfig? = null,
     val answerLength: String = "mid",
     val streamOutput: Boolean = true,
-)
+    val requestKey: String = eventId?.let { "event:$it" } ?: "",
+) {
+    init {
+        require(requestKey.isNotBlank()) { "requestKey is required for a transient answer" }
+    }
+}
 
 /**
- * Serializes answer generation per event ID. It never inserts events; callers
- * update the already persisted row when receiving a terminal result.
+ * Serializes answer generation per request key. It never inserts events; callers
+ * update a persisted row only when receiving a terminal result for a persisted request.
  */
 internal class AnswerGenerationCoordinator(
     private val scope: CoroutineScope,
@@ -30,11 +35,11 @@ internal class AnswerGenerationCoordinator(
     private val timeoutMs: Long = 5_000L,
 ) {
     private val lock = Any()
-    private val jobs = mutableMapOf<Long, Job>()
+    private val jobs = mutableMapOf<String, Job>()
 
     fun submit(request: AnswerRequest): Job? {
         val job = synchronized(lock) {
-            jobs[request.eventId]?.takeIf { it.isActive }?.let { return it }
+            jobs[request.requestKey]?.takeIf { it.isActive }?.let { return it }
             scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     answerResults(
@@ -53,10 +58,10 @@ internal class AnswerGenerationCoordinator(
                     onResult(request, AnswerResult.Failed("LLM_REQUEST"))
                 } finally {
                     synchronized(lock) {
-                        if (jobs[request.eventId] === this@launch) jobs.remove(request.eventId)
+                        if (jobs[request.requestKey] === this@launch) jobs.remove(request.requestKey)
                     }
                 }
-            }.also { jobs[request.eventId] = it }
+            }.also { jobs[request.requestKey] = it }
         }
         job.start()
         return job

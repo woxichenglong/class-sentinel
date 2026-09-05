@@ -70,4 +70,16 @@ class LiveStreamBusTranscriptTest {
         assertEquals(emptyList<String>(), LiveStreamBus.segmentList.value)
         assertEquals(state, LiveStreamBus.pipelineState.value)
     }
+
+    @Test
+    fun `starting a new course resets history persistence degradation`() {
+        LiveStreamBus.startCourse(1L)
+        LiveStreamBus.markHistoryDegraded(HistoryPersistenceFailureKind.EVENT)
+        assertEquals(true, LiveStreamBus.historyDegraded.value)
+
+        LiveStreamBus.startCourse(2L)
+
+        assertEquals(false, LiveStreamBus.historyDegraded.value)
+        assertEquals(2L, LiveStreamBus.activeCourseId.value)
+    }
 }

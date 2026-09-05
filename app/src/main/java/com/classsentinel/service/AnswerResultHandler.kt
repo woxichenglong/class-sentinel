@@ -13,11 +13,15 @@ internal class AnswerResultHandler(
         val effective = when (result) {
             is AnswerResult.Succeeded -> {
                 val answer = result.answer.trim()
+                val eventId = request.eventId
                 if (answer.isBlank()) {
                     AnswerResult.Insufficient(request.question)
+                } else if (eventId == null) {
+                    // A Room insert can fail after detection; transient answers stay in memory.
+                    AnswerResult.Succeeded(answer)
                 } else {
                     try {
-                        persistAnswer(request.eventId, answer)
+                        persistAnswer(eventId, answer)
                         AnswerResult.Succeeded(answer)
                     } catch (error: CancellationException) {
                         throw error

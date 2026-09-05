@@ -39,6 +39,11 @@ internal fun liveStateText(state: PipelineState): String = when (state) {
     is PipelineState.Error -> "出错：${state.message}"
 }
 
+internal const val HISTORY_PERSISTENCE_DEGRADED_MESSAGE = "本节部分历史保存失败"
+
+internal fun historyPersistenceWarning(degraded: Boolean): String? =
+    HISTORY_PERSISTENCE_DEGRADED_MESSAGE.takeIf { degraded }
+
 internal fun liveTranscriptDisplay(lines: List<LiveTranscriptLine>): List<String> =
     lines.asReversed().map { line ->
         when (line) {
@@ -62,6 +67,7 @@ fun LiveScreen() {
     val transcript by LiveStreamBus.transcript.collectAsState()
     val latestAnswer by LiveStreamBus.latestAnswer.collectAsState()
     val pipelineState by LiveStreamBus.pipelineState.collectAsState()
+    val historyDegraded by LiveStreamBus.historyDegraded.collectAsState()
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(
@@ -84,6 +90,14 @@ fun LiveScreen() {
             Button(onClick = { ListenService.stop(context) }) { Text("停止") }
         }
 
+        historyPersistenceWarning(historyDegraded)?.let { warning ->
+            Text(
+                warning,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
         latestAnswer?.let { answer ->
             Spacer(Modifier.height(12.dp))
             Card(
@@ -94,7 +108,9 @@ fun LiveScreen() {
                     Text("最新答案", style = MaterialTheme.typography.titleMedium)
                     Text("问题：${answer.question}", style = MaterialTheme.typography.bodyMedium)
                     Text(liveAnswerLabel(answer), style = MaterialTheme.typography.bodyLarge)
-                    if (answer.result is AnswerResult.Failed || answer.result is AnswerResult.Insufficient) {
+                    if (answer.eventId != null &&
+                        (answer.result is AnswerResult.Failed || answer.result is AnswerResult.Insufficient)
+                    ) {
                         TextButton(onClick = { ListenService.retryAnswer(context, answer.eventId) }) {
                             Text("重试")
                         }

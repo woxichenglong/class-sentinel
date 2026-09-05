@@ -81,6 +81,7 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val context = LocalContext.current
     val pipelineState by LiveStreamBus.pipelineState.collectAsState()
     val activeCourseId by LiveStreamBus.activeCourseId.collectAsState()
+    val historyDegraded by LiveStreamBus.historyDegraded.collectAsState()
     val names by AppConfig.names.collectAsState()
     val settings = remember { com.classsentinel.data.SettingsRepositoryHolder.get(context) }
     val localAsrModelId by settings.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
@@ -181,6 +182,13 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
             ) {
                 Text("当前状态", style = MaterialTheme.typography.titleMedium)
                 Text(homeStateText(pipelineState), style = MaterialTheme.typography.bodyLarge)
+                historyPersistenceWarning(historyDegraded)?.let { warning ->
+                    Text(
+                        warning,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("姓名/称呼", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(names.firstOrNull()?.display ?: "未设置")

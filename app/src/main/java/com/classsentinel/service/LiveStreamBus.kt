@@ -2,6 +2,7 @@ package com.classsentinel.service
 
 import com.classsentinel.core.detect.ClassEvent
 import com.classsentinel.core.llm.AnswerResult
+import com.classsentinel.core.log.SafeLog
 import com.classsentinel.core.pipeline.PipelineState
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -29,12 +30,18 @@ sealed interface LiveTranscriptLine {
 }
 
 data class LiveAnswerState(
-    val eventId: Long,
+    val eventId: Long?,
     val question: String,
     val context: String,
     val timestampMs: Long,
     val result: AnswerResult,
 )
+
+/** Fixed persistence failure categories safe to expose to diagnostics. */
+enum class HistoryPersistenceFailureKind(val safeCode: String) {
+    TRANSCRIPT("TRANSCRIPT_WRITE_FAILED"),
+    EVENT("EVENT_WRITE_FAILED"),
+}
 
 /**
  * 实时监听总线（进程内单例）。
@@ -68,6 +75,10 @@ object LiveStreamBus {
     /** Latest answer status for the live screen; Room remains the history source. */
     val latestAnswer: StateFlow<LiveAnswerState?> = _latestAnswer
 
+    private val _historyDegraded = MutableStateFlow(false)
+    /** Whether the current course has lost at least one history write. */
+    val historyDegraded: StateFlow<Boolean> = _historyDegraded
+
     private val _events = MutableStateFlow<List<ClassEvent>>(emptyList())
     /** 最近事件列表（新→旧顺位追加） */
     val events: StateFlow<List<ClassEvent>> = _events
@@ -85,7 +96,20 @@ object LiveStreamBus {
     fun startCourse(courseId: Long) {
         activeCourseId.value = courseId
         latestChunkId.value = null
+        _historyDegraded.value = false
         clear()
+    }
+
+    /** Mark the current course as partially unsaved without stopping live processing. */
+    fun markHistoryDegraded(kind: HistoryPersistenceFailureKind) {
+        _historyDegraded.value = true
+        SafeLog.w(
+            "history_persistence_degraded",
+            mapOf(
+                "module" to "SessionPipelineAdapter",
+                "errorCode" to kind.safeCode,
+            ),
+        )
     }
 
     /** 只有当前课程的已落库块才能成为“最近一句”。 */
@@ -150,7 +174,7 @@ object LiveStreamBus {
     }
 
     fun pushAnswer(
-        eventId: Long,
+        eventId: Long?,
         question: String,
         context: String,
         timestampMs: Long,

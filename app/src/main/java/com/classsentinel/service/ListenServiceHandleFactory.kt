@@ -295,7 +295,7 @@ internal class SessionPipelineAdapter(
         val segment = final.text
         val seq = nextChunkSeq()
         val chunkTs = System.currentTimeMillis()
-        val chunkId = bestEffortWrite {
+        val chunkId = bestEffortWrite(HistoryPersistenceFailureKind.TRANSCRIPT) {
             insertTranscript(
                 TranscriptChunkEntity(
                     courseId = courseId,
@@ -339,7 +339,7 @@ internal class SessionPipelineAdapter(
                     ?.plus("\n")
                     .orEmpty() + segment).trim(),
             )
-            val eventId = bestEffortWrite {
+            val eventId = bestEffortWrite(HistoryPersistenceFailureKind.EVENT) {
                 insertEvent(
                     EventEntity(
                         courseId = courseId,
@@ -357,16 +357,20 @@ internal class SessionPipelineAdapter(
             }
             when (contextEvent.type) {
                 EventType.ROLLCALL -> Unit
-                EventType.QUESTION -> if (eventId != null) onQuestion(contextEvent, eventId)
+                EventType.QUESTION -> onQuestion(contextEvent, eventId)
             }
         }
     }
 
-    private suspend fun <T> bestEffortWrite(write: suspend () -> T): T? = try {
+    private suspend fun <T> bestEffortWrite(
+        failureKind: HistoryPersistenceFailureKind,
+        write: suspend () -> T,
+    ): T? = try {
         withContext(Dispatchers.IO) { write() }
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
+        LiveStreamBus.markHistoryDegraded(failureKind)
         null
     }
 

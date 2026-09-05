@@ -154,6 +154,45 @@ class AnswerGenerationEndToEndTest {
         assertTrue(!observed.last().toString().contains("classroom text"))
     }
 
+    @Test
+    fun `transient answer remains in memory when event persistence has no id`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(sse("临时答案")))
+        val observed = mutableListOf<AnswerResult>()
+        var answerWrites = 0
+        val handler = AnswerResultHandler(
+            persistAnswer = { _, _ -> answerWrites++ },
+            publish = { request, result ->
+                observed += result
+                LiveStreamBus.pushAnswer(
+                    eventId = request.eventId,
+                    question = request.question,
+                    context = request.context,
+                    timestampMs = 1L,
+                    result = result,
+                )
+            },
+        )
+
+        coordinator(this, handler).submit(
+            request(
+                eventId = null,
+                streamOutput = true,
+                requestKey = "transient-1",
+            ),
+        )?.join()
+
+        assertEquals(
+            listOf(
+                AnswerResult.Generating,
+                AnswerResult.Streaming("临时答案"),
+                AnswerResult.Succeeded("临时答案"),
+            ),
+            observed,
+        )
+        assertEquals(0, answerWrites)
+        assertEquals(null, LiveStreamBus.latestAnswer.value?.eventId)
+    }
+
     private fun coordinator(
         scope: CoroutineScope,
         handler: AnswerResultHandler,
@@ -174,8 +213,13 @@ class AnswerGenerationEndToEndTest {
             onResult = { request, result -> handler.handle(request, result) },
         )
 
-    private fun request(eventId: Long, streamOutput: Boolean): AnswerRequest = AnswerRequest(
+    private fun request(
+        eventId: Long?,
+        streamOutput: Boolean,
+        requestKey: String = "event:$eventId",
+    ): AnswerRequest = AnswerRequest(
         eventId = eventId,
+        requestKey = requestKey,
         question = "问题",
         context = "上下文",
         style = AnswerStyle.TERSENESS,

@@ -69,4 +69,10 @@ class LiveScreenStateTest {
         assertEquals("监听中 · 已转写 1 句", liveStateText(PipelineState.Listening(1)))
         assertEquals("未在监听", liveStateText(PipelineState.Idle))
     }
+
+    @Test
+    fun `history persistence warning is non blocking and session scoped`() {
+        assertEquals(null, historyPersistenceWarning(false))
+        assertEquals("本节部分历史保存失败", historyPersistenceWarning(true))
+    }
 }

@@ -16,6 +16,7 @@ import com.classsentinel.core.speech.StreamingAsrEvent
 import com.classsentinel.core.speech.StreamingSpeechEngine
 import com.classsentinel.data.entities.EventEntity
 import com.classsentinel.data.entities.TranscriptChunkEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,15 +25,23 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class SessionPipelineAdapterTest {
 
     @After
     fun clearGlobalLiveState() {
         LiveStreamBus.activeCourseId.value?.let { LiveStreamBus.finishCourse(it) }
         LiveStreamBus.clear()
+        ShadowLog.clear()
     }
 
     @Test
@@ -53,6 +62,13 @@ class SessionPipelineAdapterTest {
         )
 
         assertEquals(1, alerts.fired)
+        assertEquals(true, LiveStreamBus.historyDegraded.value)
+        val logs = ShadowLog.getLogs().map { it.msg }
+        assertTrue(logs.any {
+            it.contains("history_persistence_degraded") &&
+                it.contains("errorCode=TRANSCRIPT_WRITE_FAILED")
+        })
+        assertTrue(logs.none { it.contains("transcript db failure") })
         coordinator.close()
     }
 
@@ -61,10 +77,14 @@ class SessionPipelineAdapterTest {
         val alerts = RecordingChannel()
         val coordinator = coordinator(this, alerts)
         var questionCallbacks = 0
+        var callbackEventId: Long? = Long.MIN_VALUE
         val adapter = adapter(
             scope = this,
             alert = coordinator,
-            onQuestion = { _, _ -> questionCallbacks++ },
+            onQuestion = { _, eventId ->
+                questionCallbacks++
+                callbackEventId = eventId
+            },
             insertTranscript = { 1L },
             insertEvent = { throw IllegalStateException("event db failure") },
         )
@@ -76,7 +96,64 @@ class SessionPipelineAdapterTest {
         )
 
         assertEquals(1, alerts.fired)
-        assertEquals(0, questionCallbacks)
+        assertEquals(1, questionCallbacks)
+        assertEquals(null, callbackEventId)
+        assertEquals(true, LiveStreamBus.historyDegraded.value)
+        coordinator.close()
+    }
+
+    @Test
+    fun `event persistence failure does not duplicate final event dispatch`() = runTest {
+        val alerts = RecordingChannel()
+        val coordinator = coordinator(this, alerts)
+        var eventWrites = 0
+        var questionCallbacks = 0
+        val adapter = adapter(
+            scope = this,
+            alert = coordinator,
+            onQuestion = { _, _ -> questionCallbacks++ },
+            insertTranscript = { 1L },
+            insertEvent = {
+                eventWrites++
+                throw IllegalStateException("event db failure")
+            },
+        )
+        val final = StreamingAsrEvent.Final(7, "你能解释一下为什么 CAPM 成立吗", 0L, 1_000L)
+
+        adapter.processSegment(1L, final, earlyAlerted = false)
+        adapter.processSegment(1L, final, earlyAlerted = false)
+
+        assertEquals(1, eventWrites)
+        assertEquals(1, questionCallbacks)
+        assertEquals(1, alerts.fired)
+        assertEquals(true, LiveStreamBus.historyDegraded.value)
+        coordinator.close()
+    }
+
+    @Test
+    fun `cancellation from a Room write is propagated and does not mark degradation`() = runTest {
+        LiveStreamBus.startCourse(1L)
+        val cancellation = CancellationException("caller stopped")
+        val alerts = RecordingChannel()
+        val coordinator = coordinator(this, alerts)
+        val adapter = adapter(
+            scope = this,
+            alert = coordinator,
+            insertTranscript = { throw cancellation },
+            insertEvent = { 1L },
+        )
+
+        val error = runCatching {
+            adapter.processSegment(
+                courseId = 1L,
+                final = StreamingAsrEvent.Final(1, "张伟，你来回答", 0L, 1_000L),
+                earlyAlerted = false,
+            )
+        }.exceptionOrNull()
+
+        assertEquals(CancellationException::class.java, error?.javaClass)
+        assertEquals(cancellation.message, error?.message)
+        assertEquals(false, LiveStreamBus.historyDegraded.value)
         coordinator.close()
     }
 
