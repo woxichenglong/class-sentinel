@@ -93,6 +93,8 @@ class AnswerServiceTest {
         assertTrue(system.contains("只根据用户提供的课堂上下文和问题回答"))
         assertTrue(system.contains("依据不足"))
         assertTrue(system.contains("不确定"))
+        assertTrue(system.contains("[[INSUFFICIENT]]"))
+        assertTrue(system.contains("唯一标记"))
         assertTrue(system.contains("不要猜测"))
         assertTrue(system.contains("不要输出 Markdown 长文"))
         assertTrue(user.contains(context))

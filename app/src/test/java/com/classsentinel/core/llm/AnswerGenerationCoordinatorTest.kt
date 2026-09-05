@@ -40,13 +40,54 @@ class AnswerGenerationCoordinatorTest {
         assertEquals(
             listOf(
                 42L to AnswerResult.Generating,
+                42L to AnswerResult.Streaming("答案"),
                 42L to AnswerResult.Succeeded("答案"),
                 42L to AnswerResult.Generating,
+                42L to AnswerResult.Streaming("答案"),
                 42L to AnswerResult.Succeeded("答案"),
             ),
             results,
         )
         assertEquals(42L, request.eventId)
         assertEquals(true, retry?.isCompleted)
+    }
+
+    @Test
+    fun `request stream output setting reaches result coordinator`() = runTest {
+        val results = mutableListOf<AnswerResult>()
+        val request = AnswerRequest(
+            eventId = 7L,
+            question = "问题",
+            context = "上下文",
+            streamOutput = false,
+        )
+        val coordinator = AnswerGenerationCoordinator(
+            scope = this,
+            generate = { flowOf("第一", "句") },
+            onResult = { _, result -> results += result },
+        )
+
+        coordinator.submit(request)?.join()
+
+        assertEquals(
+            listOf(AnswerResult.Generating, AnswerResult.Succeeded("第一句")),
+            results,
+        )
+    }
+
+    @Test
+    fun `synchronous typed generation error keeps its safe category`() = runTest {
+        val results = mutableListOf<AnswerResult>()
+        val coordinator = AnswerGenerationCoordinator(
+            scope = this,
+            generate = { throw LlmException(LlmError(LlmError.Kind.AUTH)) },
+            onResult = { _, result -> results += result },
+        )
+
+        coordinator.submit(
+            AnswerRequest(eventId = 8L, question = "问题", context = "上下文"),
+        )?.join()
+
+        assertEquals(listOf(AnswerResult.Failed("AUTH")), results)
     }
 }

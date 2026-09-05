@@ -18,7 +18,10 @@ import com.classsentinel.core.llm.AnswerRequest
 import com.classsentinel.core.llm.AnswerResult
 import com.classsentinel.core.llm.AnswerService
 import com.classsentinel.core.llm.AnswerStyle
+import com.classsentinel.core.llm.LlmError
 import com.classsentinel.core.llm.LlmConfig
+import com.classsentinel.core.llm.LlmException
+import com.classsentinel.core.llm.answerFailureMessage
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.data.AppDatabase
 import com.classsentinel.data.SettingsRepositoryHolder
@@ -50,11 +53,32 @@ class ListenService : Service() {
     private var serviceSession: ListenServiceSession? = null
     /** 前台通知状态收集协程；随服务销毁一并取消 */
     private var notificationJob: Job? = null
+    private val answerResultHandler = AnswerResultHandler(
+        persistAnswer = { eventId, answer ->
+            withContext(Dispatchers.IO) {
+                AppDatabase.get(applicationContext).eventDao().updateAnswer(eventId, answer)
+            }
+        },
+        publish = { request, result ->
+            LiveStreamBus.pushAnswer(
+                eventId = request.eventId,
+                question = request.question,
+                context = request.context,
+                timestampMs = System.currentTimeMillis(),
+                result = result,
+            )
+            // Streaming 只更新进程内 UI，避免每个 delta 都刷新系统通知。
+            if (result !is AnswerResult.Streaming) {
+                publishAnswerNotification(request, result)
+            }
+        },
+    )
     /** 每个 event ID 至多一个在途答案生成任务；重试复用原 event。 */
     private val answerCoordinator = AnswerGenerationCoordinator(
         scope = scope,
         generate = { request ->
-            val cfg = requireNotNull(request.llmConfig) { "AI_NOT_CONFIGURED" }
+            val cfg = request.llmConfig
+                ?: throw LlmException(LlmError(LlmError.Kind.CONFIG))
             AnswerService().answer(
                 question = request.question,
                 context = request.context,
@@ -172,7 +196,7 @@ class ListenService : Service() {
                         question = event.triggerText,
                         context = event.context,
                     ),
-                    AnswerResult.Failed("AI_NOT_CONFIGURED"),
+                    AnswerResult.Failed("CONFIG"),
                 )
                 return@launch
             }
@@ -194,44 +218,18 @@ class ListenService : Service() {
         }
     }
 
-    private suspend fun handleAnswerResult(request: AnswerRequest, result: AnswerResult) {
-        var effective = result
-        if (result is AnswerResult.Succeeded) {
-            val answer = result.answer.trim()
-            if (answer.isBlank()) {
-                effective = AnswerResult.Insufficient(request.question)
-            } else {
-                try {
-                    withContext(Dispatchers.IO) {
-                        AppDatabase.get(applicationContext).eventDao().updateAnswer(request.eventId, answer)
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    effective = AnswerResult.Failed("ANSWER_SAVE")
-                }
-            }
-        }
-        LiveStreamBus.pushAnswer(
-            eventId = request.eventId,
-            question = request.question,
-            context = request.context,
-            timestampMs = System.currentTimeMillis(),
-            result = effective,
-        )
-        publishAnswerNotification(request, effective)
-    }
+    private suspend fun handleAnswerResult(request: AnswerRequest, result: AnswerResult) =
+        answerResultHandler.handle(request, result)
 
     private fun publishAnswerNotification(request: AnswerRequest, result: AnswerResult) {
         val answer = when (result) {
             AnswerResult.Generating -> "生成中…"
+            is AnswerResult.Streaming -> result.text
             is AnswerResult.Succeeded -> result.answer
             is AnswerResult.Insufficient -> "依据不足，请检查课堂上下文后重试"
             is AnswerResult.Failed -> when (result.safeCode) {
-                "AI_NOT_CONFIGURED" -> "尚未配置 AI，请到设置完成配置"
-                "LLM_TIMEOUT" -> "生成超时，请重试"
                 "ANSWER_SAVE" -> "答案已生成，但保存失败，请重试"
-                else -> "答案生成失败，请重试"
+                else -> answerFailureMessage(result.safeCode)
             }
         }
         val notification = AnswerNotificationBuilder.build(

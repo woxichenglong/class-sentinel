@@ -35,8 +35,32 @@ class LiveScreenStateTest {
             liveAnswerLabel(base.copy(result = AnswerResult.Insufficient("问题"))),
         )
         assertEquals(
-            "答案生成失败，请重试",
+            "请求超时",
             liveAnswerLabel(base.copy(result = AnswerResult.Failed("LLM_TIMEOUT"))),
+        )
+        assertEquals(
+            "答案进行中",
+            liveAnswerLabel(base.copy(result = AnswerResult.Streaming("答案进行中"))),
+        )
+        assertEquals(
+            "检查 AI 配置",
+            liveAnswerLabel(base.copy(result = AnswerResult.Failed("AUTH"))),
+        )
+        assertEquals(
+            "网络异常，请稍后重试",
+            liveAnswerLabel(base.copy(result = AnswerResult.Failed("NETWORK"))),
+        )
+        assertEquals(
+            "请求过于频繁，请稍后重试",
+            liveAnswerLabel(base.copy(result = AnswerResult.Failed("RATE_LIMIT"))),
+        )
+        assertEquals(
+            "AI 服务暂时不可用",
+            liveAnswerLabel(base.copy(result = AnswerResult.Failed("SERVER"))),
+        )
+        assertEquals(
+            "生成失败",
+            liveAnswerLabel(base.copy(result = AnswerResult.Failed("UNKNOWN"))),
         )
     }
 

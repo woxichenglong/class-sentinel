@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.classsentinel.core.llm.AnswerResult
+import com.classsentinel.core.llm.answerFailureMessage
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveAnswerState
@@ -48,9 +49,10 @@ internal fun liveTranscriptDisplay(lines: List<LiveTranscriptLine>): List<String
 
 internal fun liveAnswerLabel(answer: LiveAnswerState): String = when (val result = answer.result) {
     AnswerResult.Generating -> "正在生成答案…"
+    is AnswerResult.Streaming -> result.text
     is AnswerResult.Succeeded -> result.answer
     is AnswerResult.Insufficient -> "依据不足"
-    is AnswerResult.Failed -> "答案生成失败，请重试"
+    is AnswerResult.Failed -> answerFailureMessage(result.safeCode)
 }
 
 /** Live transcript view: authoritative final lines, replaceable partial, and latest answer. */

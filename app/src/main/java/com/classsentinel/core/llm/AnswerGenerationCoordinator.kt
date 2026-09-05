@@ -41,11 +41,14 @@ internal class AnswerGenerationCoordinator(
                         question = request.question,
                         deltas = generate(request),
                         timeoutMs = timeoutMs,
+                        streamOutput = request.streamOutput,
                     ).collect { result ->
                         onResult(request, result)
                     }
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: LlmException) {
+                    onResult(request, AnswerResult.Failed(e.error.safeCode))
                 } catch (_: Exception) {
                     onResult(request, AnswerResult.Failed("LLM_REQUEST"))
                 } finally {
