@@ -568,6 +568,26 @@ class PendingTranscriptionWorkerTest {
     }
 
     @Test
+    fun `global AUTH failure can be rerun after configuration is fixed`() = runBlocking {
+        val auth = saveReal("auth-recover", createdTs = 100L)
+        transcriber.errorBySegment["auth-recover"] = AsrError(
+            AsrError.Kind.AUTH,
+            retriable = false,
+            message = "denied",
+        )
+
+        assertTerminalFailure(runWorker(deps()), kind = "GLOBAL", code = "AUTH")
+        assertTrue(queue.failed.isEmpty())
+
+        transcriber.errorBySegment.remove("auth-recover")
+        transcriber.textBySegment["auth-recover"] = "recovered after config fix"
+
+        assertEquals(ListenableWorker.Result.success(), runWorker(deps()))
+        assertEquals(listOf(auth.id), queue.consumed)
+        assertTrue(queue.pending.none { it.state == "PENDING" })
+    }
+
+    @Test
     fun `output Data contains no message path audio or text`() = runBlocking {
         val e1 = saveReal("a", createdTs = 100L)
         transcriber.errorBySegment["a"] = AsrError(AsrError.Kind.SERVER, retriable = true, message = "server exploded")
