@@ -20,28 +20,14 @@ internal object AnswerNotificationBuilder {
     fun build(
         context: Context,
         eventId: Long,
-        question: String,
         answer: String,
-        contextSummary: String,
-        occurredAtMs: Long,
     ): Notification {
         val shortAnswer = compactAnswer(answer)
-        val detail = buildString {
-            append("问题：")
-            append(question.trim())
-            append("\n答案：")
-            append(shortAnswer)
-            append("\n依据：")
-            append(compactDetail(contextSummary))
-            append("\n时间点：")
-            append(occurredAtMs)
-        }
         val contentIntent = pendingActivity(context, eventId, action = null, actionIndex = 0)
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("课堂答案")
             .setContentText(shortAnswer)
-            .setStyle(Notification.BigTextStyle().bigText(detail))
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setAutoCancel(true)
@@ -95,9 +81,5 @@ internal object AnswerNotificationBuilder {
             .take(MAX_ANSWER_CHARS)
             .ifBlank { "依据不足" }
 
-    private fun compactDetail(value: String): String =
-        value.replace(Regex("\\s+"), " ").trim().take(MAX_CONTEXT_CHARS).ifBlank { "无" }
-
     private const val MAX_ANSWER_CHARS = 160
-    private const val MAX_CONTEXT_CHARS = 500
 }

@@ -23,10 +23,7 @@ class AnswerNotificationBuilderTest {
         val notification = AnswerNotificationBuilder.build(
             context = context,
             eventId = 42L,
-            question = "问题原文",
             answer = "短答案",
-            contextSummary = "前置课堂上下文",
-            occurredAtMs = 123_000L,
         )
 
         assertEquals("短答案", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
@@ -42,5 +39,26 @@ class AnswerNotificationBuilderTest {
         assertEquals(42L, detailIntent.getLongExtra(AnswerNotificationBuilder.EXTRA_EVENT_ID, -1L))
         assertTrue(notification.contentIntent != null)
         assertFalse(notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("问题原文"))
+    }
+
+    @Test
+    fun `answer notification does not disclose question context or provider details`() {
+        val context = RuntimeEnvironment.getApplication()
+        val question = "QUESTION-PRIVATE-42"
+        val classroomContext = "CONTEXT-PRIVATE-17 provider body sk-provider-secret"
+
+        val notification = AnswerNotificationBuilder.build(
+            context = context,
+            eventId = 42L,
+            answer = "短答案",
+        )
+        val extrasText = notification.extras.toString()
+
+        assertTrue(extrasText.contains("短答案"))
+        assertFalse(extrasText.contains(question))
+        assertFalse(extrasText.contains(classroomContext))
+        assertFalse(extrasText.contains("provider body"))
+        assertFalse(extrasText.contains("sk-provider-secret"))
+        assertTrue(notification.contentIntent != null)
     }
 }

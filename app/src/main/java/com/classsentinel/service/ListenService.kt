@@ -242,10 +242,7 @@ class ListenService : Service() {
         val notification = AnswerNotificationBuilder.build(
             context = this,
             eventId = eventId,
-            question = request.question,
             answer = answer,
-            contextSummary = request.context,
-            occurredAtMs = System.currentTimeMillis(),
         )
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .notify(AnswerNotificationBuilder.NOTIFICATION_ID, notification)
