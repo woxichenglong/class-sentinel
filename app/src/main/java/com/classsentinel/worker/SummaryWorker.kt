@@ -90,8 +90,14 @@ class SummaryWorker(
 
                 is SummaryGenerationResult.Failed -> {
                     val errorCode = safeErrorCode(generated.code)
-                    deps.updateSummary(courseId, SummaryStatus.FAILED, null, errorCode)
-                    failure(errorCode)
+                    if (isTransientLlmFailure(errorCode)) {
+                        // 保留 QUEUED，让 WorkManager 的 request backoff 负责稍后重试。
+                        deps.updateSummary(courseId, SummaryStatus.QUEUED, null, errorCode)
+                        ListenableWorker.Result.retry()
+                    } else {
+                        deps.updateSummary(courseId, SummaryStatus.FAILED, null, errorCode)
+                        failure(errorCode)
+                    }
                 }
             }
         } catch (e: CancellationException) {
@@ -120,9 +126,20 @@ class SummaryWorker(
         ERROR_CODE_GENERATION,
         ERROR_CODE_CONFIG,
         ERROR_CODE_QUEUE,
+        ERROR_CODE_AUTH,
+        ERROR_CODE_RATE_LIMIT,
+        ERROR_CODE_NETWORK,
+        ERROR_CODE_SERVER,
+        ERROR_CODE_UNKNOWN,
         -> raw
         else -> ERROR_CODE_GENERATION
     }
+
+    private fun isTransientLlmFailure(code: String): Boolean = code in setOf(
+        ERROR_CODE_RATE_LIMIT,
+        ERROR_CODE_NETWORK,
+        ERROR_CODE_SERVER,
+    )
 
     companion object {
         const val KEY_COURSE_ID = "courseId"
@@ -133,6 +150,11 @@ class SummaryWorker(
         const val ERROR_CODE_GENERATION = "GENERATION_FAILED"
         const val ERROR_CODE_CONFIG = "CONFIG"
         const val ERROR_CODE_QUEUE = "QUEUE_FAILED"
+        const val ERROR_CODE_AUTH = "AUTH"
+        const val ERROR_CODE_RATE_LIMIT = "RATE_LIMIT"
+        const val ERROR_CODE_NETWORK = "NETWORK"
+        const val ERROR_CODE_SERVER = "SERVER"
+        const val ERROR_CODE_UNKNOWN = "UNKNOWN"
         const val ERROR_CODE_INVALID_INPUT = "INVALID_INPUT"
 
         const val BACKOFF_DELAY_MILLIS = 30_000L

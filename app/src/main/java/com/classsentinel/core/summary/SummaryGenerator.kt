@@ -2,6 +2,7 @@ package com.classsentinel.core.summary
 
 import com.classsentinel.core.llm.LlmClient
 import com.classsentinel.core.llm.LlmConfig
+import com.classsentinel.core.llm.LlmException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
+import java.io.IOException
 
 /** 生成器的可替换流式客户端；生产默认走 [LlmClient.streamChat]。 */
 typealias SummaryStreamChat = (List<Map<String, String>>, LlmConfig) -> Flow<String>
@@ -88,8 +90,12 @@ class SummaryGenerator(
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: LlmException) {
+            SummaryGenerationResult.Failed(e.error.safeCode)
         } catch (_: EmptySummaryResponseException) {
             SummaryGenerationResult.Failed("EMPTY_RESPONSE")
+        } catch (_: IOException) {
+            SummaryGenerationResult.Failed("NETWORK")
         } catch (_: Exception) {
             SummaryGenerationResult.Failed("GENERATION_FAILED")
         }

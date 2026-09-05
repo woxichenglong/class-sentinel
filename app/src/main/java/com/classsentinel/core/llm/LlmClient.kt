@@ -1,6 +1,7 @@
 package com.classsentinel.core.llm
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -33,50 +34,66 @@ class LlmClient(
 
     /** 逐个 delta.content 发射；非 2xx 抛 IOException(带状态码) */
     fun streamChat(messages: List<Map<String, String>>, cfg: LlmConfig): Flow<String> = flow {
-        val payload = JSONObject()
-            .put("model", cfg.model)
-            .put("stream", true)
-            .put("messages", JSONArray().apply {
-                messages.forEach { m ->
-                    put(JSONObject().put("role", m["role"]).put("content", m["content"]))
-                }
-            })
-        // deepseek-v4-flash 铁律：不带 thinking disabled 会思维链吃满 max_tokens 返回空
-        if (cfg.thinkingDisabled) {
-            payload.put("thinking", JSONObject().put("type", "disabled"))
-        }
-        cfg.maxTokens?.let { payload.put("max_tokens", it) }
-        val bodyStr = payload.toString()
-        val req = Request.Builder()
-            .url("${cfg.baseUrl.trimEnd('/')}/chat/completions")
-            .addHeader("Authorization", "Bearer ${cfg.apiKey}")
-            .addHeader("Accept", "text/event-stream")
-            .post(bodyStr.toRequestBody("application/json".toMediaType()))
-            .build()
+        try {
+            val payload = JSONObject()
+                .put("model", cfg.model)
+                .put("stream", true)
+                .put("messages", JSONArray().apply {
+                    messages.forEach { m ->
+                        put(JSONObject().put("role", m["role"]).put("content", m["content"]))
+                    }
+                })
+            // deepseek-v4-flash 铁律：不带 thinking disabled 会思维链吃满 max_tokens 返回空
+            if (cfg.thinkingDisabled) {
+                payload.put("thinking", JSONObject().put("type", "disabled"))
+            }
+            cfg.maxTokens?.let { payload.put("max_tokens", it) }
+            val bodyStr = payload.toString()
+            val req = Request.Builder()
+                .url("${cfg.baseUrl.trimEnd('/')}/chat/completions")
+                .addHeader("Authorization", "Bearer ${cfg.apiKey}")
+                .addHeader("Accept", "text/event-stream")
+                .post(bodyStr.toRequestBody("application/json".toMediaType()))
+                .build()
 
-        // 注意: 不能在 withContext(IO) 里 emit(Flow 不变式违规)，用 flowOn 切调度
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                // provider body 可能包含课堂内容/凭证提示；只向上层暴露状态码。
-                throw IOException("LLM HTTP ${resp.code}")
-            }
-            val source = resp.body?.source() ?: throw IOException("LLM empty body")
-            while (true) {
-                val line = source.readUtf8Line() ?: break // EOF 兜底
-                val trimmed = line.trim()
-                if (!trimmed.startsWith("data:")) continue // 忽略注释/空行
-                val data = trimmed.removePrefix("data:").trim()
-                if (data.isEmpty()) continue
-                if (data == "[DONE]") break
-                val content = JSONObject(data)
-                    .optJSONArray("choices")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("delta")
-                    ?.opt("content")
-                if (content != null && content != JSONObject.NULL) {
-                    emit(content.toString())
+            // 注意: 不能在 withContext(IO) 里 emit(Flow 不变式违规)，用 flowOn 切调度
+            client.newCall(req).execute().use { resp ->
+                when {
+                    resp.code == 401 || resp.code == 403 ->
+                        throw LlmException(LlmError(LlmError.Kind.AUTH))
+                    resp.code == 429 ->
+                        throw LlmException(LlmError(LlmError.Kind.RATE_LIMIT))
+                    resp.code in 500..599 ->
+                        throw LlmException(LlmError(LlmError.Kind.SERVER))
+                    !resp.isSuccessful ->
+                        throw LlmException(LlmError(LlmError.Kind.CONFIG))
+                }
+                val source = resp.body?.source() ?: throw IOException("LLM empty body")
+                while (true) {
+                    val line = source.readUtf8Line() ?: break // EOF 兜底
+                    val trimmed = line.trim()
+                    if (!trimmed.startsWith("data:")) continue // 忽略注释/空行
+                    val data = trimmed.removePrefix("data:").trim()
+                    if (data.isEmpty()) continue
+                    if (data == "[DONE]") break
+                    val content = JSONObject(data)
+                        .optJSONArray("choices")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("delta")
+                        ?.opt("content")
+                    if (content != null && content != JSONObject.NULL) {
+                        emit(content.toString())
+                    }
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: LlmException) {
+            throw e
+        } catch (_: IOException) {
+            throw LlmException(LlmError(LlmError.Kind.NETWORK))
+        } catch (_: Exception) {
+            throw LlmException(LlmError(LlmError.Kind.UNKNOWN))
         }
     }.flowOn(Dispatchers.IO)
 }

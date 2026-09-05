@@ -5,13 +5,16 @@ import androidx.work.Data
 import androidx.work.ListenableWorker
 import androidx.work.NetworkType
 import androidx.work.testing.TestListenableWorkerBuilder
+import com.classsentinel.core.llm.LlmError
 import com.classsentinel.core.llm.LlmConfig
+import com.classsentinel.core.llm.LlmException
 import com.classsentinel.core.summary.SummaryGenerator
 import com.classsentinel.core.summary.SummaryTemplate
 import com.classsentinel.core.summary.SummaryTemplates
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -91,6 +94,66 @@ class SummaryWorkerTest {
         assertFalse(deps.updates.any { it.markdown != null })
         assertFalse(result.toString().contains(transcript))
         assertFalse(result.toString().contains("provider body"))
+    }
+
+    @Test
+    fun `network generation failure retries with queued status`() = runBlocking {
+        val deps = FakeDependencies(
+            transcript = "有内容",
+            configProvider = { config },
+            generator = SummaryGenerator(
+                streamChat = { _, _ -> flow { throw IOException("socket reset") } },
+            ),
+        )
+
+        val result = worker(deps).doWork()
+
+        assertEquals(ListenableWorker.Result.retry(), result)
+        assertEquals(
+            listOf(
+                Update(7L, "RUNNING", null, null),
+                Update(7L, "QUEUED", null, "NETWORK"),
+            ),
+            deps.updates,
+        )
+    }
+
+    @Test
+    fun `typed rate limit retries with queued status`() = runBlocking {
+        val deps = FakeDependencies(
+            transcript = "有内容",
+            configProvider = { config },
+            generator = SummaryGenerator(
+                streamChat = { _, _ ->
+                    flow { throw LlmException(LlmError(LlmError.Kind.RATE_LIMIT)) }
+                },
+            ),
+        )
+
+        val result = worker(deps).doWork()
+
+        assertEquals(ListenableWorker.Result.retry(), result)
+        assertEquals("RATE_LIMIT", deps.updates.last().error)
+        assertEquals("QUEUED", deps.updates.last().status)
+    }
+
+    @Test
+    fun `typed auth is terminal failure`() = runBlocking {
+        val deps = FakeDependencies(
+            transcript = "有内容",
+            configProvider = { config },
+            generator = SummaryGenerator(
+                streamChat = { _, _ ->
+                    flow { throw LlmException(LlmError(LlmError.Kind.AUTH)) }
+                },
+            ),
+        )
+
+        val result = worker(deps).doWork()
+
+        assertTerminalFailure(result, "AUTH")
+        assertEquals("FAILED", deps.updates.last().status)
+        assertEquals("AUTH", deps.updates.last().error)
     }
 
     @Test

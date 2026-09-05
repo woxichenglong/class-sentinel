@@ -95,8 +95,47 @@ class SummaryGeneratorTest {
 
         val result = SummaryGenerator(LlmClient()).generateResult(longer, cfgWithServer())
 
-        assertEquals(SummaryGenerationResult.Failed("GENERATION_FAILED"), result)
+        assertEquals(SummaryGenerationResult.Failed("SERVER"), result)
         assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `rate limit response preserves typed retryable error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(429).setBody("provider body must not escape"))
+
+        val result = SummaryGenerator(LlmClient()).generateResult("有内容", cfgWithServer())
+
+        assertEquals(SummaryGenerationResult.Failed("RATE_LIMIT"), result)
+    }
+
+    @Test
+    fun `server response preserves typed retryable error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503).setBody("provider body must not escape"))
+
+        val result = SummaryGenerator(LlmClient()).generateResult("有内容", cfgWithServer())
+
+        assertEquals(SummaryGenerationResult.Failed("SERVER"), result)
+    }
+
+    @Test
+    fun `auth and config responses preserve terminal typed errors`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("provider body must not escape"))
+        server.enqueue(MockResponse().setResponseCode(400).setBody("provider body must not escape"))
+
+        val auth = SummaryGenerator(LlmClient()).generateResult("有内容", cfgWithServer())
+        val config = SummaryGenerator(LlmClient()).generateResult("有内容", cfgWithServer())
+
+        assertEquals(SummaryGenerationResult.Failed("AUTH"), auth)
+        assertEquals(SummaryGenerationResult.Failed("CONFIG"), config)
+    }
+
+    @Test
+    fun `empty SSE response remains terminal empty response`() = runTest {
+        server.enqueue(MockResponse().setBody("data: [DONE]\n\n"))
+
+        val result = SummaryGenerator(LlmClient()).generateResult("有内容", cfgWithServer())
+
+        assertEquals(SummaryGenerationResult.Failed("EMPTY_RESPONSE"), result)
     }
 
     @Test

@@ -10,7 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.io.IOException
+
 
 class LlmClientTest {
 
@@ -73,14 +73,14 @@ class LlmClientTest {
     }
 
     @Test
-    fun `throws IOException with status code on non 2xx`() = runTest {
+    fun `throws safe typed error on non 2xx`() = runTest {
         server.enqueue(MockResponse().setResponseCode(500).setBody("provider body must not escape"))
         val err = runCatching {
             LlmClient().streamChat(listOf(mapOf("role" to "user", "content" to "hi")), cfg()).toList()
         }.exceptionOrNull()
-        assertTrue(err is IOException)
-        assertTrue(err!!.message!!.contains("500"))
-        assertTrue(!err.message!!.contains("provider body"))
+        assertTrue(err is LlmException)
+        assertEquals(LlmError.Kind.SERVER, (err as LlmException).error.kind)
+        assertTrue(!err.message.orEmpty().contains("provider body"))
     }
 
     @Test
