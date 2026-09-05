@@ -161,7 +161,7 @@ class SherpaOnnxRecognizerConfigTest {
             assertEquals("", model.modelingUnit)
             assertEquals("cpu", model.provider)
             assertEquals("greedy_search", config.decodingMethod)
-            assertEquals(false, config.enableEndpoint)
+            assertEquals(true, config.enableEndpoint)
             assertEquals(16_000, config.featConfig.sampleRate)
             assertEquals(80, config.featConfig.featureDim)
             assertEquals(File(modelDir, profile.artifact.encoder.name).path, transducer.encoder)
@@ -169,5 +169,21 @@ class SherpaOnnxRecognizerConfigTest {
             assertEquals(File(modelDir, profile.artifact.joiner.name).path, transducer.joiner)
             assertEquals(File(modelDir, profile.artifact.tokens.name).path, model.tokens)
         }
+    }
+
+    @Test
+    fun `x asr live endpoint policy is separate from official deployment mode`() {
+        val profile = ModelProfiles.X_ASR_480
+        val modelDir = File("/data/user/0/com.classsentinel/files/asr/${profile.artifact.directory}")
+
+        val live = SherpaOnnxRecognizerFactory.buildConfig(modelDir, profile)
+        val official = SherpaOnnxRecognizerFactory.buildConfig(
+            modelDirectory = modelDir,
+            profile = profile,
+            endpointMode = SherpaEndpointMode.OFFICIAL_DEPLOYMENT,
+        )
+
+        assertTrue(live.enableEndpoint)
+        assertFalse(official.enableEndpoint)
     }
 }

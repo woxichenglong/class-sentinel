@@ -1,10 +1,18 @@
 package com.classsentinel.core.speech
 
+import com.classsentinel.core.detect.EventEngine
+import com.classsentinel.core.detect.EventType
+import com.classsentinel.core.detect.NameEntry
+import com.classsentinel.core.detect.NameMatcher
+import com.classsentinel.core.detect.Sensitivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -121,6 +129,63 @@ class SherpaOnnxStreamingEngineTest {
         assertEquals(0L, engine.lastReplayTimings?.decodeElapsedMs)
     }
 
+    @Test
+    fun `x asr endpoint off exposes one utterance id as an unsupported repeated-rollcall policy`() = runTest {
+        val stream = TwoPhraseStream(endpointEnabled = false)
+        val engine = SherpaOnnxStreamingEngine(
+            profile = ModelProfiles.X_ASR_480,
+            recognizerFactory = { FakeRecognizer(stream) },
+        )
+
+        val events = engine.transcribe(
+            flowOf(
+                shortArrayOf(100),
+                shortArrayOf(100),
+                shortArrayOf(100),
+                shortArrayOf(100),
+            ),
+        ).toList()
+        val partials = events.filterIsInstance<StreamingAsrEvent.Partial>()
+        val detector = EventEngine(
+            NameMatcher(listOf(NameEntry("张伟", emptyList()))),
+            MutableStateFlow(Sensitivity.STANDARD),
+        )
+
+        assertEquals(listOf(1, 1), partials.map { it.utteranceId })
+        assertNotNull(detector.processPartialRollcall(1, partials[0].text, ts = 1_000))
+        assertNull(detector.processPartialRollcall(1, partials[1].text, ts = 62_000))
+    }
+
+    @Test
+    fun `x asr endpoint on smoke resets ids so two independent rollcalls can alert`() = runTest {
+        val stream = TwoPhraseStream(endpointEnabled = true)
+        val engine = SherpaOnnxStreamingEngine(
+            profile = ModelProfiles.X_ASR_480,
+            recognizerFactory = { FakeRecognizer(stream) },
+        )
+
+        val events = engine.transcribe(
+            flowOf(
+                shortArrayOf(100),
+                shortArrayOf(100),
+                shortArrayOf(100),
+                shortArrayOf(100),
+            ),
+        ).toList()
+        val partials = events.filterIsInstance<StreamingAsrEvent.Partial>()
+        val finals = events.filterIsInstance<StreamingAsrEvent.Final>()
+        val detector = EventEngine(
+            NameMatcher(listOf(NameEntry("张伟", emptyList()))),
+            MutableStateFlow(Sensitivity.STANDARD),
+        )
+
+        assertEquals(listOf(1, 2), partials.map { it.utteranceId })
+        assertEquals(listOf(1, 2), finals.map { it.utteranceId })
+        assertEquals(EventType.ROLLCALL, detector.processPartialRollcall(1, partials[0].text, ts = 1_000)?.type)
+        assertEquals(EventType.ROLLCALL, detector.processPartialRollcall(2, partials[1].text, ts = 62_000)?.type)
+        assertEquals(2, stream.resetCalls)
+    }
+
     private class FakeClock(var nowNanos: Long = 0L) {
         fun advanceMs(ms: Long) {
             nowNanos += ms * 1_000_000L
@@ -211,6 +276,49 @@ class SherpaOnnxStreamingEngineTest {
 
         override fun inputFinished() {
             inputFinishedCalls++
+            readyFrames = 1
+        }
+
+        override fun release() = Unit
+    }
+
+    private class TwoPhraseStream(
+        private val endpointEnabled: Boolean,
+    ) : SherpaOnlineStreamPort {
+        var resetCalls = 0
+        private var inputCount = 0
+        private var phraseIndex = 0
+        private var readyFrames = 0
+
+        override fun acceptWaveform(samples: FloatArray, sampleRate: Int) {
+            inputCount++
+            readyFrames = 1
+        }
+
+        override fun isReady(): Boolean = readyFrames > 0
+
+        override fun decode() {
+            readyFrames--
+        }
+
+        override fun resultText(): String {
+            val phrase = if (endpointEnabled) {
+                phraseIndex
+            } else {
+                (inputCount - 1).coerceAtMost(1)
+            }
+            return listOf("张伟你来回答", "张伟请发言")[phrase]
+        }
+
+        override fun isEndpoint(): Boolean = endpointEnabled && inputCount == 2
+
+        override fun reset() {
+            resetCalls++
+            phraseIndex++
+            inputCount = 0
+        }
+
+        override fun inputFinished() {
             readyFrames = 1
         }
 

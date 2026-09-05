@@ -24,21 +24,21 @@ class EventEngine(
     private val nameMatcher: NameMatcher,
     private val sensitivityFlow: StateFlow<Sensitivity>,
 ) {
-    private var lastRollcallTs = 0L
+    private var confirmedRollcallTs = 0L
     private var lastQuestionTs = 0L
     private val finalWindow = FinalTranscriptWindow()
     private val processedFinalIds = mutableSetOf<Int>()
     private val processedPartialRollcallIds = mutableSetOf<Int>()
-    private val earlyRollcallIds = mutableSetOf<Int>()
+    private val provisionalRollcallIds = mutableSetOf<Int>()
     private var syntheticFinalId = 0
 
     /** Clear all per-listening-session state before a reused handle starts a new course. */
     fun resetSession() {
-        lastRollcallTs = 0L
+        confirmedRollcallTs = 0L
         lastQuestionTs = 0L
         processedFinalIds.clear()
         processedPartialRollcallIds.clear()
-        earlyRollcallIds.clear()
+        provisionalRollcallIds.clear()
         syntheticFinalId = 0
         finalWindow.clear()
     }
@@ -47,8 +47,8 @@ class EventEngine(
     fun process(segment: String, ts: Long = System.currentTimeMillis()): ClassEvent? {
         val sens = sensitivityFlow.value
         nameMatcher.detect(segment, sens)?.let {
-            if (lastRollcallTs == 0L || ts - lastRollcallTs >= sens.rollcallSuppressMs) {
-                lastRollcallTs = ts
+            if (confirmedRollcallTs == 0L || ts - confirmedRollcallTs >= sens.rollcallSuppressMs) {
+                confirmedRollcallTs = ts
                 return ClassEvent(
                     type = EventType.ROLLCALL,
                     triggerText = segment,
@@ -91,9 +91,8 @@ class EventEngine(
         if (!hit.isExact || hit.score != 1.0) return null
 
         processedPartialRollcallIds += utteranceId
-        if (lastRollcallTs == 0L || ts - lastRollcallTs >= sens.rollcallSuppressMs) {
-            lastRollcallTs = ts
-            earlyRollcallIds += utteranceId
+        if (confirmedRollcallTs == 0L || ts - confirmedRollcallTs >= sens.rollcallSuppressMs) {
+            provisionalRollcallIds += utteranceId
             return ClassEvent(
                 type = EventType.ROLLCALL,
                 triggerText = text,
@@ -108,7 +107,7 @@ class EventEngine(
 
     /** Processes authoritative final text; partial hypotheses must never call this method. */
     fun processFinal(final: FinalTranscript, ts: Long = System.currentTimeMillis()): ClassEvent? {
-        val earlyRollcall = earlyRollcallIds.remove(final.utteranceId)
+        val earlyRollcall = provisionalRollcallIds.remove(final.utteranceId)
         if (final.text.isBlank() || !processedFinalIds.add(final.utteranceId)) return null
         val window = finalWindow.add(final)
         val combined = window.combinedText
@@ -116,6 +115,12 @@ class EventEngine(
 
         val question = QuestionDetector.detectAnswerable(combined, sens.questionWordLevel)
         val nameHit = nameMatcher.detect(combined, sens)
+
+        // A confirming final commits the provisional alert to the authoritative suppression clock.
+        // A rewritten final without a name does not, so a false partial cannot suppress later calls.
+        if (earlyRollcall && nameHit != null) {
+            confirmedRollcallTs = ts
+        }
 
         // 明确问当前学生：姓名命中会把开放题提升为 DIRECT；高置信度“你”由 detector 自己识别。
         if (question != null && (question.scope == EventScope.DIRECT || nameHit != null)) {
@@ -136,10 +141,8 @@ class EventEngine(
         // 1. 姓名命中但没有问题：只做点名提醒，不调用 LLM。
         nameHit?.let {
             if (earlyRollcall) {
-                // Partial already advanced the rollcall suppression clock. The final still must
-                // produce the authoritative DB event; the service adapter suppresses only its
-                // duplicate alert.
-                lastRollcallTs = ts
+                // The final confirms the provisional alert and must still produce the
+                // authoritative DB event; the service adapter suppresses only its duplicate alert.
                 return ClassEvent(
                     type = EventType.ROLLCALL,
                     triggerText = final.text,
@@ -149,8 +152,8 @@ class EventEngine(
                     reason = "NAME_ONLY",
                 )
             }
-            if (lastRollcallTs == 0L || ts - lastRollcallTs >= sens.rollcallSuppressMs) {
-                lastRollcallTs = ts
+            if (confirmedRollcallTs == 0L || ts - confirmedRollcallTs >= sens.rollcallSuppressMs) {
+                confirmedRollcallTs = ts
                 return ClassEvent(
                     type = EventType.ROLLCALL,
                     triggerText = final.text,

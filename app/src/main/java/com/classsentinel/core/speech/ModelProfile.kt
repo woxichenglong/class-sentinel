@@ -69,7 +69,10 @@ internal data class ModelRecognizerProfile(
     val featureDim: Int,
     val endpoint: ModelEndpointProfile,
     val artifactStreamingChunkMs: Int? = null,
+    /** Endpoint policy for the live classroom session. */
     val enableEndpoint: Boolean = true,
+    /** Endpoint setting from the upstream official deployment/smoke command. */
+    val officialDeploymentEnableEndpoint: Boolean = true,
     val maxActivePaths: Int = 4,
     val hotwordsFile: String = "",
     val hotwordsScore: Float = 0.0f,
@@ -304,7 +307,8 @@ internal object ModelProfiles {
                 ),
             ),
             artifactStreamingChunkMs = 480,
-            enableEndpoint = false,
+            enableEndpoint = true,
+            officialDeploymentEnableEndpoint = false,
             maxActivePaths = 4,
             hotwordsScore = 1.5f,
         ),
@@ -371,7 +375,8 @@ internal object ModelProfiles {
                 ),
             ),
             artifactStreamingChunkMs = 960,
-            enableEndpoint = false,
+            enableEndpoint = true,
+            officialDeploymentEnableEndpoint = false,
             maxActivePaths = 4,
             hotwordsScore = 1.5f,
         ),
@@ -386,12 +391,18 @@ internal object ModelProfiles {
         displayName = "X-ASR 中英 960ms（性能优先）",
     )
 
-    /** Profiles that may be selected for ordinary local listening. */
-    val DAILY_SELECTABLE: List<ModelProfile> = listOf(
+    /** All pinned profiles available to evaluation and debug-only model import. */
+    val EVALUATION_CATALOG: List<ModelProfile> = listOf(
         ZIPFORMER_ZH_14M,
         SMALL_BILINGUAL_ZH_EN,
         X_ASR_480,
         X_ASR_960,
+    )
+
+    /** Profiles that may be selected for ordinary local listening after live endpoint smoke. */
+    val DAILY_SELECTABLE: List<ModelProfile> = listOf(
+        ZIPFORMER_ZH_14M,
+        SMALL_BILINGUAL_ZH_EN,
     )
 
     /** Unknown persisted values fail closed to the stable baseline. */

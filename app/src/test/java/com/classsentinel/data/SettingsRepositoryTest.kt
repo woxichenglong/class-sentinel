@@ -150,10 +150,18 @@ class SettingsRepositoryTest {
         val r = repo()
 
         assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, r.localAsrModelIdFlow.first())
-        r.saveLocalAsrModel(ModelProfiles.X_ASR_960.id)
+        r.saveLocalAsrModel(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id)
 
-        assertEquals(ModelProfiles.X_ASR_960.id, r.localAsrModelIdFlow.first())
-        assertEquals(ModelProfiles.X_ASR_960.id, repo().localAsrModelIdFlow.first())
+        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
+        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, repo().localAsrModelIdFlow.first())
+
+        var rejectedExperimentalProfile = false
+        try {
+            r.saveLocalAsrModel(ModelProfiles.X_ASR_960.id)
+        } catch (error: IllegalArgumentException) {
+            rejectedExperimentalProfile = error.message == "UNKNOWN_LOCAL_ASR_MODEL"
+        }
+        assertTrue(rejectedExperimentalProfile)
     }
 
     @Test

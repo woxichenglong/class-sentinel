@@ -1,9 +1,12 @@
 package com.classsentinel.core.detect
 
+import com.classsentinel.service.EarlyRollcallAlertGate
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EventEngineTest {
@@ -93,6 +96,25 @@ class EventEngineTest {
     }
 
     @Test
+    fun `confirming final keeps authoritative event while early alert gate suppresses duplicate`() {
+        val eng = engine()
+        val gate = EarlyRollcallAlertGate()
+
+        val provisional = eng.processPartialRollcall(7, "张伟，你来", ts = 1_000)
+        assertNotNull(provisional)
+        assertTrue(gate.record(7))
+
+        val final = eng.processFinal(
+            FinalTranscript(7, "张伟，你来回答", 0L, 2_000L),
+            ts = 2_000,
+        )
+
+        assertEquals(EventType.ROLLCALL, final?.type)
+        assertTrue(gate.consume(7))
+        assertFalse(gate.consume(7))
+    }
+
+    @Test
     fun `early partial followed by final without the name creates no rollcall`() {
         val eng = engine()
 
@@ -103,6 +125,26 @@ class EventEngineTest {
                 ts = 2_000,
             ),
         )
+    }
+
+    @Test
+    fun `retracted partial does not consume confirmed rollcall suppression window`() {
+        val eng = engine()
+
+        assertNotNull(eng.processPartialRollcall(7, "张伟，你来", ts = 1_000))
+        assertNull(
+            eng.processFinal(
+                FinalTranscript(7, "老师请继续讲", 0L, 2_000L),
+                ts = 2_000,
+            ),
+        )
+
+        val laterRollcall = eng.processFinal(
+            FinalTranscript(8, "张伟，你来回答", 5_000L, 6_000L),
+            ts = 6_000,
+        )
+
+        assertEquals(EventType.ROLLCALL, laterRollcall?.type)
     }
 
     @Test

@@ -10,11 +10,18 @@ import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import java.io.File
 
+/** Selects the endpoint policy for a recognizer configuration. */
+internal enum class SherpaEndpointMode {
+    LIVE,
+    OFFICIAL_DEPLOYMENT,
+}
+
 /** Builds the pinned v1.13.7 CPU/MLAS configuration and adapts its native API. */
 internal object SherpaOnnxRecognizerFactory {
     fun buildConfig(
         modelDirectory: File,
         profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+        endpointMode: SherpaEndpointMode = SherpaEndpointMode.LIVE,
     ): OnlineRecognizerConfig {
         val artifact = profile.artifact
         val recognizer = profile.recognizer
@@ -36,7 +43,10 @@ internal object SherpaOnnxRecognizerFactory {
                 modelingUnit = recognizer.modelingUnit,
             ),
             endpointConfig = recognizer.endpoint.toSherpaConfig(),
-            enableEndpoint = recognizer.enableEndpoint,
+            enableEndpoint = when (endpointMode) {
+                SherpaEndpointMode.LIVE -> recognizer.enableEndpoint
+                SherpaEndpointMode.OFFICIAL_DEPLOYMENT -> recognizer.officialDeploymentEnableEndpoint
+            },
             decodingMethod = recognizer.decodingMethod,
             maxActivePaths = recognizer.maxActivePaths,
             hotwordsFile = recognizer.hotwordsFile,
@@ -50,12 +60,13 @@ internal object SherpaOnnxRecognizerFactory {
     fun create(
         modelDirectory: File,
         profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+        endpointMode: SherpaEndpointMode = SherpaEndpointMode.LIVE,
     ): SherpaOnlineRecognizerPort {
         require(modelDirectory.isDirectory) { "ASR_MODEL_NOT_READY" }
         return NativeRecognizerPort(
             OnlineRecognizer(
                 assetManager = null,
-                config = buildConfig(modelDirectory, profile),
+                config = buildConfig(modelDirectory, profile, endpointMode),
             ),
         )
     }

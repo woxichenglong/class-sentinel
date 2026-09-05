@@ -169,7 +169,8 @@ class ModelProfileTest {
         assertEquals(16_000, profile.recognizer.sampleRate)
         assertEquals(80, profile.recognizer.featureDim)
         assertEquals(480, profile.recognizer.artifactStreamingChunkMs)
-        assertEquals(false, profile.recognizer.enableEndpoint)
+        assertEquals(true, profile.recognizer.enableEndpoint)
+        assertEquals(false, profile.recognizer.officialDeploymentEnableEndpoint)
         assertEquals(4, profile.recognizer.maxActivePaths)
         assertEquals(1.5f, profile.recognizer.hotwordsScore, 0.0f)
         assertTrue(profile.capabilities.zh)
@@ -214,7 +215,8 @@ class ModelProfileTest {
         assertEquals(16_000, profile.recognizer.sampleRate)
         assertEquals(80, profile.recognizer.featureDim)
         assertEquals(960, profile.recognizer.artifactStreamingChunkMs)
-        assertEquals(false, profile.recognizer.enableEndpoint)
+        assertEquals(true, profile.recognizer.enableEndpoint)
+        assertEquals(false, profile.recognizer.officialDeploymentEnableEndpoint)
         assertEquals(4, profile.recognizer.maxActivePaths)
         assertEquals(1.5f, profile.recognizer.hotwordsScore, 0.0f)
         assertTrue(profile.capabilities.zh)
@@ -224,7 +226,14 @@ class ModelProfileTest {
     }
 
     @Test
-    fun `daily model catalog exposes baseline small and both x asr choices`() {
+    fun `daily catalog excludes x asr until live endpoint smoke while evaluation keeps all profiles`() {
+        assertEquals(
+            listOf(
+                "sherpa-zh-14m",
+                "sherpa-small-bilingual-zh-en",
+            ),
+            ModelProfiles.DAILY_SELECTABLE.map { it.id },
+        )
         assertEquals(
             listOf(
                 "sherpa-zh-14m",
@@ -232,9 +241,10 @@ class ModelProfileTest {
                 "x-asr-480",
                 "x-asr-960",
             ),
-            ModelProfiles.DAILY_SELECTABLE.map { it.id },
+            ModelProfiles.EVALUATION_CATALOG.map { it.id },
         )
         assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, ModelProfiles.resolveDaily("unknown").id)
+        assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, ModelProfiles.resolveDaily(ModelProfiles.X_ASR_960.id).id)
         assertEquals("X-ASR 中英 960ms（性能优先）", ModelProfiles.X_ASR_960.displayName)
     }
 }

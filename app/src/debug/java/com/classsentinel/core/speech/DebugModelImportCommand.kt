@@ -9,14 +9,14 @@ internal data class DebugModelImportRequest(
 )
 
 /**
- * Accept only a daily allowlisted profile and an absolute source directory.
+ * Accept only an evaluation-allowlisted profile and an absolute source directory.
  * The importer performs the actual file allowlist, canonical-root, size, and hash checks.
  */
 internal fun parseDebugModelImportRequest(
     profileId: String?,
     sourcePath: String?,
 ): DebugModelImportRequest {
-    val profile = ModelProfiles.DAILY_SELECTABLE.firstOrNull { it.id == profileId }
+    val profile = ModelProfiles.EVALUATION_CATALOG.firstOrNull { it.id == profileId }
         ?: throw IllegalArgumentException("UNKNOWN_LOCAL_ASR_MODEL")
     val path = sourcePath?.takeIf { it.isNotBlank() }
         ?: throw IllegalArgumentException("ASR_MODEL_SOURCE_PATH_INVALID")

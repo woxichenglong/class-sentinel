@@ -98,17 +98,17 @@ AudioStreamer
 
 ## 评测工具状态
 
-- `[已完成]` `ModelProfile`：14M baseline、small bilingual、X-ASR 480/960 的 artifact、SHA-256/size、recognizer 配置、endpoint、能力声明和日常可选目录集中管理。
+- `[已完成]` `ModelProfile`：14M baseline、small bilingual、X-ASR 480/960 的 artifact、SHA-256/size、recognizer 配置、live/official endpoint 策略、能力声明和 evaluation/daily 目录集中管理。
 - `[已完成]` `SherpaModelInstaller`：按 profile 校验目标文件 hash/size，使用 profile marker；有效缓存不重读 APK assets，同尺寸损坏文件会被替换。
-- `[已完成]` `SherpaOnnxRecognizerFactory`：从 profile 映射 artifact 路径、provider、modelType、modelingUnit、decode、endpoint、hotword/rule 参数。
+- `[已完成]` `SherpaOnnxRecognizerFactory`：从 profile 映射 artifact 路径、provider、modelType、modelingUnit、decode、endpoint、hotword/rule 参数；显式区分 live 与 official deployment endpoint mode。
 - `[已完成]` `PcmReplayRunner`：`PreparedModel` 将 profile、artifactSetHash 与 profile-bound engine 绑定；直接接受 PCM 或 PCM16 mono WAV，使用独立 `ReplayInputConfig.inputPacketMs`（默认 100ms），支持 FAST/REALTIME；REALTIME pacing 在 Runner 层按累计 sample 的绝对音频时间轴执行，并在首包真正准备发送时 lazy 建立 audio clock，WAV source 只负责切包；输出 init/decode/total timing，不经过 legacy importer/VAD。
 - `[已完成]` `UnifiedAsrScorer` + CSV：输出 CER、混合词 WER、脚本级 code-switch error、专业词/姓名 Recall 与 False Discovery Rate、First Partial/Final、`steadyStateRtf` 和可选设备指标；CSV 记录 profile/artifact/run/mode/packet/timing、`scorer_version=1`、`normalization_profile=mixed-zh-en-v1`，不保存参考/识别正文。
 - `[已完成]` AudioRecord stop 边界：显式 stop 后平台负读码视为 graceful EOF，正常运行期间负读码仍保持 typed failure。
 - `[已完成]` small bilingual 官方 artifact、许可证、配置和四文件 size/SHA-256；已加入 `SMALL_BILINGUAL_ZH_EN` profile，可在设置页作为日常模型选择，默认仍为 14M；root artifact 的默认 chunk size 32 不映射为毫秒。
 - `[已完成]` debug-only model importer：只在 debug source set 提供按 profile 导入外部四文件的私有目录 seam；replay 不绑定直接写应用私有目录。
-- `[已完成]` X-ASR 官方 Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 480/960 两个 deployment artifact、许可证、配置和四文件 size/SHA-256；已加入 `X_ASR_480`/`X_ASR_960` profile 及日常选择器，未打入 APK，需先通过 debug importer 准备。
-- `[已完成]` 点名 Partial fast path：`EventEngine.processPartialRollcall()` 仅接受文本 exact 且 `score == 1.0`，同 utterance 去重；Partial 只触发 ROLLCALL alert，不写 DB/不触发 QUESTION/LLM，Final 继续权威落库并跳过已提前提醒的重复 ROLLCALL alert。
-- `[已完成]` 两个 X-ASR profile 均按官方 deployment config 完成 host smoke；在此之前未运行正式 A/B。
+- `[已完成]` X-ASR 官方 Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 480/960 两个 deployment artifact、许可证、配置和四文件 size/SHA-256；已加入 `X_ASR_480`/`X_ASR_960` evaluation profile，live endpoint-on、official deployment endpoint-off，未打入 APK，需先通过 debug importer 准备；live native endpoint-on smoke 仍待完成。
+- `[已完成]` 点名 Partial fast path：`EventEngine.processPartialRollcall()` 仅接受文本 exact 且 `score == 1.0`，同 utterance 去重；Partial 只触发 ROLLCALL alert，不写 DB/不触发 QUESTION/LLM，provisional 不推进 confirmed suppression，Final 继续权威落库并跳过已提前提醒的重复 ROLLCALL alert。
+- `[已完成]` endpoint-off 同 utteranceId 限制和 endpoint-on 两句 reset smoke 已由 JVM seam 回归锁定；真实 X-ASR native endpoint-on 行为仍需 host/目标设备验证，未据此开放日常选择。
 - `[部分完成]` 用同一官方 `test_wavs/0.wav` 完成 A/B/C/D 的 1-clip FAST smoke；另有 `proxy-finance-v1` 的 30 scripts/60 WAV，B/C/D FAST 及 C/D quiet/classroom REALTIME 证据。结果只作流程/候选筛选证据，不能替代真实金融课堂 corpus 或 K80 测量。
 - `[待补]` 固定金融课堂 corpus、reference transcript、扩大样本后的 FAST 结果、warm-up/交错顺序记录和 K80 E2E 采集。
 
