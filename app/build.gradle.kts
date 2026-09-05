@@ -6,6 +6,11 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+val releaseKeystorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
+
 android {
     namespace = "com.classsentinel"
     compileSdk = 35
@@ -18,8 +23,19 @@ android {
         versionName = "0.3.0"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = releaseKeystorePath?.let(::file)
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
+            // Keep minify off until the measured size profile justifies a separate optimization slice.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -57,6 +73,27 @@ android {
         // 依赖版本刻意与已验证的 Kotlin/AGP/WorkManager 组合锁定；升级需单独回归。
         disable += "GradleDependency"
     }
+}
+
+val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+    doLast {
+        val missing = buildList {
+            if (releaseKeystorePath.isNullOrBlank()) add("ANDROID_KEYSTORE_PATH")
+            if (releaseStorePassword.isNullOrBlank()) add("ANDROID_KEYSTORE_PASSWORD")
+            if (releaseKeyAlias.isNullOrBlank()) add("ANDROID_KEY_ALIAS")
+            if (releaseKeyPassword.isNullOrBlank()) add("ANDROID_KEY_PASSWORD")
+        }
+        check(missing.isEmpty()) {
+            "Release signing requires local secure configuration: ${missing.joinToString(", ")}"
+        }
+        check(file(releaseKeystorePath!!).isFile) {
+            "ANDROID_KEYSTORE_PATH must point to a readable keystore"
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(verifyReleaseSigning)
 }
 
 ksp {

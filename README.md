@@ -131,7 +131,7 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 
 ### 方式一：下载 APK
 
-从 [Releases](../../releases) 下载发布产物；debug APK 只用于测试，不是设备验收证明。当前尚未把 debug 构建当作 release 下载物。
+从 [Releases](../../releases) 下载 release APK（`app-release.apk`）；debug APK 只用于测试，不是 release 下载物或设备验收证明。
 
 ### 方式二：源码构建
 
@@ -151,6 +151,19 @@ printf 'sdk.dir=C:/path/to/Android/Sdk\n' > local.properties
 # APK 产物
 # app/build/outputs/apk/debug/app-debug.apk
 ```
+
+### Release 构建
+
+Release 签名只从本地安全环境变量或 GitHub Actions encrypted secrets 读取：`ANDROID_KEYSTORE_PATH`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。不要把 keystore、密码或 base64 内容写入仓库或日志。
+
+```bash
+# 已在本地安全环境配置签名变量后执行；缺少变量时任务会安全失败
+./gradlew :app:assembleRelease
+stat -c '%s bytes' app/build/outputs/apk/release/app-release.apk
+sha256sum app/build/outputs/apk/release/app-release.apk
+```
+
+Release 产物由 tag-only 的 `Android Release` workflow 发布；debug APK 仅由普通 `Android CI` 用于测试。
 
 Windows 命令提示符或 PowerShell 可将 `./gradlew` 替换为 `gradlew.bat`。当前使用 AGP 8.6.1，已针对 compileSdk 35；本次 `testDebugUnitTest` 和 `assembleDebug` 均成功。
 
