@@ -84,6 +84,36 @@ class LlmClientTest {
     }
 
     @Test
+    fun `HTTP 599 response is SERVER and not NETWORK`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(599).setBody("provider body must not escape"))
+
+        val err = runCatching {
+            LlmClient().streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                cfg(),
+            ).toList()
+        }.exceptionOrNull()
+
+        assertTrue(err is LlmException)
+        assertEquals(LlmError.Kind.SERVER, (err as LlmException).error.kind)
+        assertEquals("SERVER", err.message)
+    }
+
+    @Test
+    fun `OkHttp connection IOException is NETWORK`() = runTest {
+        val err = runCatching {
+            LlmClient().streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                LlmConfig("http://127.0.0.1:1/v1", "sk-test", "gpt-4o-mini"),
+            ).toList()
+        }.exceptionOrNull()
+
+        assertTrue(err is LlmException)
+        assertEquals(LlmError.Kind.NETWORK, (err as LlmException).error.kind)
+        assertEquals("NETWORK", err.message)
+    }
+
+    @Test
     fun `Command Code preset disables thinking in the request payload`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("data: [DONE]\n\n"))
         val commandCode = AiProviderPreset.COMMAND_CODE

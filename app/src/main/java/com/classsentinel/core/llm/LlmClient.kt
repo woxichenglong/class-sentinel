@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -25,11 +26,7 @@ class LlmClient(
 ) {
 
     companion object {
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS) // 流式回答要等模型吐字
-            .protocols(listOf(Protocol.HTTP_1_1)) // 运营商对 h2 协商存在 QoS 干扰（手机实测），强制 h1
-            .build()
+        fun defaultClient(): OkHttpClient = newLlmTransportClient()
     }
 
     /** 逐个 delta.content 发射；非 2xx 抛 IOException(带状态码) */
@@ -97,3 +94,17 @@ class LlmClient(
         }
     }.flowOn(Dispatchers.IO)
 }
+
+/**
+ * Shared OkHttp transport builder used by production LLM calls and the debug-only probe.
+ * A null protocol list leaves OkHttp's default h2+h1 negotiation untouched for comparison.
+ */
+internal fun newLlmTransportClient(
+    protocols: List<Protocol>? = listOf(Protocol.HTTP_1_1),
+    eventListenerFactory: EventListener.Factory? = null,
+): OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(60, TimeUnit.SECONDS) // 流式回答要等模型吐字
+    .apply { protocols?.let(::protocols) }
+    .apply { eventListenerFactory?.let(::eventListenerFactory) }
+    .build()

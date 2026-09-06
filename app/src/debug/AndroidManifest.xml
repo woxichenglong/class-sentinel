@@ -5,5 +5,10 @@
             android:excludeFromRecents="true"
             android:exported="true"
             android:noHistory="true" />
+        <activity
+            android:name="com.classsentinel.core.llm.LlmTransportProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true" />
     </application>
 </manifest>
