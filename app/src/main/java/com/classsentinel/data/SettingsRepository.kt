@@ -14,6 +14,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.audio.AudioRetentionPolicy
+import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
 import com.classsentinel.core.llm.AiProviderPreset
@@ -62,7 +63,8 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * sensitivityFlow/saveSensitivityPreset、rollcallSuppressMsFlow/saveRollcallSuppressMs、
  * questionSuppressMsFlow/saveQuestionSuppressMs、vadDbFlow/saveVadDb、
  * asrEngineFlow/saveAsrEngine、localAsrModelIdFlow/saveLocalAsrModel、
- * answerTriggerModeFlow/saveAnswerTriggerMode、channelFlow/setChannelEnabled、
+ * answerTriggerModeFlow/saveAnswerTriggerMode、questionAlertModeFlow/saveQuestionAlertMode、
+ * channelFlow/setChannelEnabled、
  * aiSettingsFlow/saveAiSettings。
  */
 class SettingsRepository(
@@ -293,6 +295,11 @@ class SettingsRepository(
         .map { AnswerTriggerMode.fromStored(it[Keys.ANSWER_TRIGGER_MODE]) }
         .ioCatch { AnswerTriggerMode.DEFAULT }
 
+    /** QUESTION alert policy; live dispatch reads the current DataStore value for each event. */
+    val questionAlertModeFlow: Flow<QuestionAlertMode> = dataStore.data
+        .map { QuestionAlertMode.fromStored(it[Keys.QUESTION_ALERT_MODE]) }
+        .ioCatch { QuestionAlertMode.DEFAULT }
+
     val autoSummaryFlow: Flow<Boolean> = dataStore.data
         .map { it[Keys.AUTO_SUMMARY] ?: false }
         .ioCatch { false }
@@ -468,6 +475,10 @@ class SettingsRepository(
         dataStore.edit { it[Keys.ANSWER_TRIGGER_MODE] = mode.storedValue }
     }
 
+    suspend fun saveQuestionAlertMode(mode: QuestionAlertMode) {
+        dataStore.edit { it[Keys.QUESTION_ALERT_MODE] = mode.storedValue }
+    }
+
     suspend fun saveAutoSummary(enabled: Boolean) {
         dataStore.edit { it[Keys.AUTO_SUMMARY] = enabled }
     }
@@ -556,6 +567,7 @@ class SettingsRepository(
         if (p[Keys.ANSWER_STYLE] == null) p[Keys.ANSWER_STYLE] = "terseness"
         if (p[Keys.STREAM_OUTPUT] == null) p[Keys.STREAM_OUTPUT] = true
         if (p[Keys.ANSWER_TRIGGER_MODE] == null) p[Keys.ANSWER_TRIGGER_MODE] = AnswerTriggerMode.DEFAULT.storedValue
+        if (p[Keys.QUESTION_ALERT_MODE] == null) p[Keys.QUESTION_ALERT_MODE] = QuestionAlertMode.DEFAULT.storedValue
         if (p[Keys.AUTO_SUMMARY] == null) p[Keys.AUTO_SUMMARY] = false
         if (p[Keys.SUMMARY_TEMPLATE_ID] == null) p[Keys.SUMMARY_TEMPLATE_ID] = SummaryTemplates.DEFAULT_ID
         if (p[Keys.SUMMARY_CUSTOM_PROMPT] == null) p[Keys.SUMMARY_CUSTOM_PROMPT] = ""
@@ -627,6 +639,7 @@ private object Keys {
     val ANSWER_STYLE = stringPreferencesKey("answer_style")
     val STREAM_OUTPUT = booleanPreferencesKey("stream_output")
     val ANSWER_TRIGGER_MODE = stringPreferencesKey("answer_trigger_mode")
+    val QUESTION_ALERT_MODE = stringPreferencesKey("question_alert_mode")
     val AUTO_SUMMARY = booleanPreferencesKey("auto_summary")
     val SUMMARY_TEMPLATE_ID = stringPreferencesKey("summary_template_id")
     val SUMMARY_CUSTOM_PROMPT = stringPreferencesKey("summary_custom_prompt")

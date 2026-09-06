@@ -23,6 +23,7 @@ object SettingConsumerMatrix {
         "answerStyle",
         "streamOutput",
         "answerTriggerMode",
+        "questionAlertMode",
         "darkMode",
         "localAsrModel",
     )
@@ -43,6 +44,7 @@ object SettingConsumerMatrix {
         "answerStyle" to "AnswerService → ListenService",
         "streamOutput" to "AnswerService → ListenService",
         "answerTriggerMode" to "AnswerTriggerPolicy → ListenService/AnswerGenerationCoordinator",
+        "questionAlertMode" to "QuestionAlertPolicy → SessionPipelineAdapter/AlertCoordinator",
         "darkMode" to "MainActivity → ClassSentinelTheme",
         "localAsrModel" to "SettingsRepository → ListenServiceHandleFactory/SherpaOnnxStreamingEngine",
     )

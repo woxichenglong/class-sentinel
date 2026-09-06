@@ -38,6 +38,7 @@ class SettingConsumerMatrixTest {
         assertTrue("ai.apiKey" in SettingConsumerMatrix.visibleKeys)
         assertTrue("ai.model" in SettingConsumerMatrix.visibleKeys)
         assertTrue("channel.notify" in SettingConsumerMatrix.visibleKeys)
+        assertTrue("questionAlertMode" in SettingConsumerMatrix.visibleKeys)
         assertEquals(
             "SettingsRepository → ListenServiceHandleFactory/SherpaOnnxStreamingEngine",
             SettingConsumerMatrix.consumers["localAsrModel"],

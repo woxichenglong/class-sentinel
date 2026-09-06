@@ -3,6 +3,8 @@ package com.classsentinel.service
 import android.content.Context
 import com.classsentinel.core.alert.AlertCoordinator
 import com.classsentinel.core.alert.NotifyChannel
+import com.classsentinel.core.alert.QuestionAlertMode
+import com.classsentinel.core.alert.QuestionAlertPolicy
 import com.classsentinel.core.alert.VibratorChannel
 import com.classsentinel.core.audio.AudioStreamer
 import com.classsentinel.core.config.AppConfig
@@ -104,6 +106,9 @@ internal class ListenServiceHandleFactory(
             pipeline = pipeline,
             eventEngine = eventEngine,
             alert = alert,
+            questionAlertPolicy = QuestionAlertPolicy {
+                settings.questionAlertModeFlow.first()
+            },
             currentCourseId = store::currentCourseId,
             nextChunkSeq = store::nextChunkSeq,
             contextBuffer = contextBuffer,
@@ -206,6 +211,9 @@ internal class SessionPipelineAdapter(
     private val pipeline: StreamingListenPipeline,
     private val eventEngine: EventEngine,
     private val alert: AlertCoordinator,
+    private val questionAlertPolicy: QuestionAlertPolicy = QuestionAlertPolicy {
+        QuestionAlertMode.ALL_QUESTIONS
+    },
     private val currentCourseId: () -> Long?,
     private val nextChunkSeq: () -> Int,
     private val contextBuffer: TranscriptContextBuffer,
@@ -352,7 +360,11 @@ internal class SessionPipelineAdapter(
                     ),
                 )
             }
-            if (!(contextEvent.type == EventType.ROLLCALL && earlyAlerted)) {
+            val shouldAlert = when (contextEvent.type) {
+                EventType.ROLLCALL -> !earlyAlerted
+                EventType.QUESTION -> questionAlertPolicy.shouldAlert(contextEvent)
+            }
+            if (shouldAlert) {
                 alert.fire(contextEvent, context)
             }
             when (contextEvent.type) {

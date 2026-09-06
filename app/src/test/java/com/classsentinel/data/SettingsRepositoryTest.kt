@@ -9,6 +9,7 @@ import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
+import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.core.speech.ModelProfiles
 import kotlinx.coroutines.CoroutineScope
@@ -296,5 +297,19 @@ class SettingsRepositoryTest {
 
         val reloaded = repo()
         assertEquals(AnswerTriggerMode.ALL_QUESTIONS, reloaded.answerTriggerModeFlow.first())
+    }
+
+    @Test
+    fun `问题提醒模式默认只提醒点名问题并可持久化回读`() = runBlocking {
+        val r = repo()
+        r.load()
+
+        assertEquals(QuestionAlertMode.TARGETED_ONLY, r.questionAlertModeFlow.first())
+
+        r.saveQuestionAlertMode(QuestionAlertMode.ALL_QUESTIONS)
+        assertEquals(QuestionAlertMode.ALL_QUESTIONS, r.questionAlertModeFlow.first())
+
+        val reloaded = repo()
+        assertEquals(QuestionAlertMode.ALL_QUESTIONS, reloaded.questionAlertModeFlow.first())
     }
 }

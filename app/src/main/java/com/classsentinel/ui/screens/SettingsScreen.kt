@@ -50,6 +50,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.AnswerTriggerMode
@@ -84,6 +85,7 @@ fun SettingsScreen() {
     val qLevel by repo.questionWordLevelFlow.collectAsState(initial = 2)
     val chVibrate by repo.channelFlow(Channels.VIBRATE).collectAsState(initial = true)
     val chNotify by repo.channelFlow(Channels.NOTIFY).collectAsState(initial = true)
+    val questionAlertMode by repo.questionAlertModeFlow.collectAsState(initial = QuestionAlertMode.DEFAULT)
     val vibrateMode by repo.vibrationModeFlow.collectAsState(initial = "normal")
     val ai by repo.aiSettingsFlow.collectAsState(initial = defaultAiSettingsForUi())
     val answerLength by repo.answerLengthFlow.collectAsState(initial = "mid")
@@ -255,6 +257,29 @@ fun SettingsScreen() {
                     if (notificationGranted) "通知权限：已授权" else "通知权限：请在系统设置中授权",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("问题提醒", style = MaterialTheme.typography.titleSmall)
+                QuestionAlertModeOption(
+                    mode = QuestionAlertMode.ALL_QUESTIONS,
+                    selected = questionAlertMode,
+                    title = "所有问题",
+                    subtitle = "检测到课堂提问就提醒",
+                    onSelect = { saveSnap { repo.saveQuestionAlertMode(it) } },
+                )
+                QuestionAlertModeOption(
+                    mode = QuestionAlertMode.TARGETED_ONLY,
+                    selected = questionAlertMode,
+                    title = "只提醒点到我的问题",
+                    subtitle = "只有老师明确点到我时提醒",
+                    onSelect = { saveSnap { repo.saveQuestionAlertMode(it) } },
+                )
+                QuestionAlertModeOption(
+                    mode = QuestionAlertMode.OFF,
+                    selected = questionAlertMode,
+                    title = "关闭问题提醒",
+                    subtitle = "仍记录问题，但不震动/通知",
+                    onSelect = { saveSnap { repo.saveQuestionAlertMode(it) } },
                 )
             }
         }
@@ -521,6 +546,26 @@ private fun AnswerTriggerModeOption(
     title: String,
     subtitle: String,
     onSelect: (AnswerTriggerMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onSelect(mode) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = mode == selected, onClick = { onSelect(mode) })
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun QuestionAlertModeOption(
+    mode: QuestionAlertMode,
+    selected: QuestionAlertMode,
+    title: String,
+    subtitle: String,
+    onSelect: (QuestionAlertMode) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable { onSelect(mode) },
