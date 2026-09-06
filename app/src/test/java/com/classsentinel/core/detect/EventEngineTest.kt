@@ -227,6 +227,39 @@ class EventEngineTest {
     }
 
     @Test
+    fun `rhetorical meta discourse does not reach the final event path`() {
+        assertNull(
+            engine().processFinal(
+                FinalTranscript(1, "这个天赋设计有点垃圾，为什么这么说呢？", 0L, 1_000L),
+                ts = 1_000L,
+            ),
+        )
+        assertNull(
+            engine().processFinal(
+                FinalTranscript(2, "这个东西吧，怎么说呢……", 1_000L, 2_000L),
+                ts = 2_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `strong targets still reach the final event path over rhetorical wording`() {
+        val classInvite = engine().processFinal(
+            FinalTranscript(1, "有没有同学来回答，为什么这么说？", 0L, 1_000L),
+            ts = 1_000L,
+        )
+        assertEquals(EventType.QUESTION, classInvite?.type)
+        assertEquals(EventScope.CLASS_OPEN, classInvite?.scope)
+
+        val direct = engine().processFinal(
+            FinalTranscript(2, "张伟，你来回答为什么这么说", 1_000L, 2_000L),
+            ts = 2_000L,
+        )
+        assertEquals(EventType.QUESTION, direct?.type)
+        assertEquals(EventScope.DIRECT, direct?.scope)
+    }
+
+    @Test
     fun `the targeted student being absent is not upgraded to direct`() {
         val event = engine().processFinal(
             FinalTranscript(1, "张伟今天没来，为什么这个结论成立", 0L, 1_000L),

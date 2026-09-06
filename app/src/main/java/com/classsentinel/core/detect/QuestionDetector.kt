@@ -37,6 +37,15 @@ object QuestionDetector {
         "有没有问题",
         "吗",
     )
+    private val rhetoricalMarkers = listOf(
+        "为什么这么说呢",
+        "为什么这么说",
+        "怎么说呢",
+        "怎么讲呢",
+        "你也许会问",
+        "你可能会问",
+        "有人可能会问",
+    )
     private val openMarkersLevel1 = listOf(
         "解释",
         "回答一下",
@@ -81,6 +90,7 @@ object QuestionDetector {
         if (directMarkers.any { segment.contains(it) } && hasOpenMarker) {
             return AnswerableQuestion(EventScope.DIRECT, "DIRECT_REQUEST")
         }
+        if (rhetoricalMarkers.any { segment.contains(it) }) return null
         if (hasOpenMarker) {
             return AnswerableQuestion(EventScope.CLASS_OPEN, "OPEN_QUESTION")
         }

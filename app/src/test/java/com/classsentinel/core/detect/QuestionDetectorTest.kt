@@ -98,4 +98,47 @@ class QuestionDetectorTest {
         assertEquals(2, Sensitivity.STANDARD.questionWordLevel)
         assertEquals(3, Sensitivity.LOOSE.questionWordLevel)
     }
+
+    @Test
+    fun `real classroom open questions remain answerable`() {
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable(
+                "有没有同学来回答，为什么二氧化碳增加会导致全球变暖",
+                2,
+            )?.scope,
+        )
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("为什么二氧化碳增加会导致全球变暖", 2)?.scope,
+        )
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("你们觉得为什么价格会上涨", 2)?.scope,
+        )
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("什么是边际效用", 3)?.scope,
+        )
+    }
+
+    @Test
+    fun `high confidence rhetorical prompts are not answerable questions`() {
+        assertNull(QuestionDetector.detectAnswerable("这个天赋设计有点垃圾，为什么这么说呢？", 2))
+        assertNull(QuestionDetector.detectAnswerable("看着数值很低，其实已经很慷慨了。为什么这么说呢？", 2))
+        assertNull(QuestionDetector.detectAnswerable("这个东西吧，怎么说呢……", 2))
+        assertNull(QuestionDetector.detectAnswerable("你也许会问这个设计有什么意义", 2))
+    }
+
+    @Test
+    fun `strong classroom targets override rhetorical guard`() {
+        assertEquals(
+            EventScope.CLASS_OPEN,
+            QuestionDetector.detectAnswerable("有没有同学来回答，为什么这么说？", 2)?.scope,
+        )
+        assertEquals(
+            EventScope.DIRECT,
+            QuestionDetector.detectAnswerable("张伟，你来回答为什么这么说", 2)?.scope,
+        )
+    }
 }
