@@ -1,0 +1,192 @@
+{
+  "version": 2,
+  "locale": "zh-CN",
+  "index_path": "aoci.txt",
+  "exclude_dirs": [
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    "coverage",
+    "tmp",
+    "uploads",
+    "backup",
+    "backups",
+    "artifacts",
+    ".output",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    "htmlcov"
+  ],
+  "exclude_files": [
+    "*.backup.*",
+    "*.bak",
+    ".coverage"
+  ],
+  "exclude_exts": [],
+  "curation_exclude": [],
+  "hook_strict": false,
+  "ledger_enabled": true,
+  "line_ending_tolerance": true,
+  "cognition_refresh_threshold": 30,
+  "overview_delivery": {
+    "chunk_tokens": 8000
+  },
+  "managed_scope": {
+    "version": "managed-scope-policy/v2",
+    "profile": "full",
+    "observe_change_policy": "review_required",
+    "approval_mode": "inherit",
+    "approval_thresholds": {
+      "entry_removal_count": 25,
+      "entry_removal_percent": 25
+    },
+    "rules": [
+      {
+        "rule_id": "gradle-cache",
+        "action": "exclude",
+        "pattern": ".gradle",
+        "pattern_kind": "directory",
+        "reason": "Gradle 本地缓存与执行历史，不属于项目源码或架构语义",
+        "decision_basis": "generated_asset",
+        "source": "user",
+        "created_by": "human",
+        "order": 10,
+        "enabled": true
+      },
+      {
+        "rule_id": "asr-model-binaries",
+        "action": "exclude",
+        "pattern": "**/*.onnx",
+        "pattern_kind": "glob",
+        "reason": "ASR 推理模型二进制，保留模型配置/词表文本但不把大二进制纳入认知",
+        "decision_basis": "generated_asset",
+        "source": "user",
+        "created_by": "human",
+        "order": 20,
+        "enabled": true
+      },
+      {
+        "rule_id": "bundled-third-party-aar",
+        "action": "exclude",
+        "pattern": "app/libs/*.aar",
+        "pattern_kind": "glob",
+        "reason": "本地捆绑的第三方 Android AAR 二进制，源码契约由 Gradle 依赖和项目边界表达",
+        "decision_basis": "generated_asset",
+        "source": "user",
+        "created_by": "human",
+        "order": 30,
+        "enabled": true
+      },
+      {
+        "rule_id": "gradle-wrapper-binary",
+        "action": "exclude",
+        "pattern": "gradle/wrapper/gradle-wrapper.jar",
+        "pattern_kind": "file",
+        "reason": "Gradle Wrapper 第三方二进制，不属于自有源码或架构语义",
+        "decision_basis": "generated_asset",
+        "source": "user",
+        "created_by": "human",
+        "order": 40,
+        "enabled": true
+      },
+      {
+        "rule_id": "local-machine-config",
+        "action": "exclude",
+        "pattern": "local.properties",
+        "pattern_kind": "file",
+        "reason": "本机 SDK 路径配置，仅用于本地构建，不属于项目架构语义",
+        "decision_basis": "generated_asset",
+        "source": "user",
+        "created_by": "human",
+        "order": 50,
+        "enabled": true
+      }
+    ]
+  },
+  "cognition_budget": {
+    "version": "cognition-budget-policy/v1",
+    "mode": "enforce",
+    "whole_index": {
+      "target_tokens": 200000,
+      "warning_tokens": 300000,
+      "max_tokens": 400000
+    },
+    "r": [
+      {
+        "min_c": 1,
+        "max_c": 4,
+        "target_tokens": 25,
+        "max_tokens": 50
+      },
+      {
+        "min_c": 5,
+        "max_c": 7,
+        "target_tokens": 45,
+        "max_tokens": 90
+      },
+      {
+        "min_c": 8,
+        "max_c": 8,
+        "target_tokens": 70,
+        "max_tokens": 140
+      },
+      {
+        "min_c": 9,
+        "max_c": 9,
+        "target_tokens": 90,
+        "max_tokens": 180
+      }
+    ],
+    "s": [
+      {
+        "min_c": 1,
+        "max_c": 4,
+        "target_tokens": 20,
+        "max_tokens": 40
+      },
+      {
+        "min_c": 5,
+        "max_c": 7,
+        "target_tokens": 40,
+        "max_tokens": 80
+      },
+      {
+        "min_c": 8,
+        "max_c": 8,
+        "target_tokens": 70,
+        "max_tokens": 140
+      },
+      {
+        "min_c": 9,
+        "max_c": 9,
+        "target_tokens": 100,
+        "max_tokens": 200
+      }
+    ]
+  },
+  "installed_agents": [],
+  "automation": {
+    "mode": "auto"
+  },
+  "ai": {
+    "enabled": false,
+    "provider": "openai-compatible",
+    "base_url": "",
+    "model": "",
+    "api_key_env": "",
+    "timeout_seconds": 0,
+    "max_concurrency": 0,
+    "max_input_tokens": 0,
+    "token_accounting": "auto",
+    "prompt_snapshot": "redacted"
+  }
+}
