@@ -18,6 +18,8 @@ import com.classsentinel.core.llm.AnswerRequest
 import com.classsentinel.core.llm.AnswerResult
 import com.classsentinel.core.llm.AnswerService
 import com.classsentinel.core.llm.AnswerStyle
+import com.classsentinel.core.llm.AnswerTriggerDispatcher
+import com.classsentinel.core.llm.AnswerTriggerPolicy
 import com.classsentinel.core.llm.LlmError
 import com.classsentinel.core.llm.LlmConfig
 import com.classsentinel.core.llm.LlmException
@@ -93,6 +95,14 @@ class ListenService : Service() {
         },
         onResult = { request, result -> handleAnswerResult(request, result) },
     )
+    /** Automatic-answer policy sits after EventEngine and before AnswerGenerationCoordinator. */
+    private val automaticAnswerDispatcher = AnswerTriggerDispatcher(
+        scope = scope,
+        policy = AnswerTriggerPolicy {
+            SettingsRepositoryHolder.get(applicationContext).answerTriggerModeFlow.first()
+        },
+        onAllowed = { event, eventId -> launchAnswer(event, eventId) },
+    )
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -157,7 +167,7 @@ class ListenService : Service() {
                 context = this@ListenService,
                 scope = scope,
                 onCoordinator = { coordinator = it },
-                onQuestion = { event, eventId, _ -> launchAnswer(event, eventId) },
+                onQuestion = { event, eventId, _ -> automaticAnswerDispatcher.dispatch(event, eventId) },
             ).create()
         },
         stopSelfResult = { id -> stopSelfResult(id) },

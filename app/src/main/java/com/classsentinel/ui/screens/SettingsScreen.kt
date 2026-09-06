@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiProviderPreset
+import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.data.AiSettings
@@ -88,6 +89,7 @@ fun SettingsScreen() {
     val answerLength by repo.answerLengthFlow.collectAsState(initial = "mid")
     val answerStyle by repo.answerStyleFlow.collectAsState(initial = "terseness")
     val streamOutput by repo.streamOutputFlow.collectAsState(initial = true)
+    val answerTriggerMode by repo.answerTriggerModeFlow.collectAsState(initial = AnswerTriggerMode.DEFAULT)
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
     val localAsrModelId by repo.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
     val asrEngine by repo.asrEngineFlow.collectAsState(initial = "telespeech")
@@ -339,6 +341,29 @@ fun SettingsScreen() {
                     onSelect = { saveSnap { repo.saveAnswerStyle(it) } },
                 )
                 SwitchRow("流式输出", "逐段显示答案", checked = streamOutput) { saveSnap { repo.saveStreamOutput(it) } }
+                Spacer(Modifier.height(8.dp))
+                Text("自动回答", style = MaterialTheme.typography.titleSmall)
+                AnswerTriggerModeOption(
+                    mode = AnswerTriggerMode.ALL_QUESTIONS,
+                    selected = answerTriggerMode,
+                    title = "所有问题",
+                    subtitle = "检测到课堂提问时自动生成答案",
+                    onSelect = { saveSnap { repo.saveAnswerTriggerMode(it) } },
+                )
+                AnswerTriggerModeOption(
+                    mode = AnswerTriggerMode.TARGETED_ONLY,
+                    selected = answerTriggerMode,
+                    title = "只回答点到我的问题",
+                    subtitle = "只有老师明确点名并提问时自动生成答案",
+                    onSelect = { saveSnap { repo.saveAnswerTriggerMode(it) } },
+                )
+                AnswerTriggerModeOption(
+                    mode = AnswerTriggerMode.OFF,
+                    selected = answerTriggerMode,
+                    title = "关闭自动回答",
+                    subtitle = "仍记录提问，但不自动调用 AI",
+                    onSelect = { saveSnap { repo.saveAnswerTriggerMode(it) } },
+                )
             }
         }
 
@@ -487,6 +512,26 @@ private fun aiSettingsValidationMessage(code: String): String = when (code) {
     "BASE_URL_HTTPS_REQUIRED" -> "Base URL 必须使用 https://"
     "MODEL_BLANK" -> "模型不能为空"
     else -> "请检查 Base URL 和模型"
+}
+
+@Composable
+private fun AnswerTriggerModeOption(
+    mode: AnswerTriggerMode,
+    selected: AnswerTriggerMode,
+    title: String,
+    subtitle: String,
+    onSelect: (AnswerTriggerMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onSelect(mode) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = mode == selected, onClick = { onSelect(mode) })
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 @Composable

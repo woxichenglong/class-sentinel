@@ -9,6 +9,7 @@ import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
+import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.core.speech.ModelProfiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -281,5 +282,19 @@ class SettingsRepositoryTest {
         // 未知值不能让运行时进入未定义策略，安全回退到 FAILED_ONLY。
         r.saveAudioRetentionPolicy("future-policy")
         assertEquals(AudioRetentionPolicy.DEFAULT.storedValue, r.audioRetentionPolicyFlow.first())
+    }
+
+    @Test
+    fun `自动回答模式默认只回答点名问题并可持久化回读`() = runBlocking {
+        val r = repo()
+        r.load()
+
+        assertEquals(AnswerTriggerMode.TARGETED_ONLY, r.answerTriggerModeFlow.first())
+
+        r.saveAnswerTriggerMode(AnswerTriggerMode.ALL_QUESTIONS)
+        assertEquals(AnswerTriggerMode.ALL_QUESTIONS, r.answerTriggerModeFlow.first())
+
+        val reloaded = repo()
+        assertEquals(AnswerTriggerMode.ALL_QUESTIONS, reloaded.answerTriggerModeFlow.first())
     }
 }

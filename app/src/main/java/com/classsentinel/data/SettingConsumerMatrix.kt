@@ -22,6 +22,7 @@ object SettingConsumerMatrix {
         "answerLength",
         "answerStyle",
         "streamOutput",
+        "answerTriggerMode",
         "darkMode",
         "localAsrModel",
     )
@@ -41,6 +42,7 @@ object SettingConsumerMatrix {
         "answerLength" to "AnswerService → prompt/max_tokens",
         "answerStyle" to "AnswerService → ListenService",
         "streamOutput" to "AnswerService → ListenService",
+        "answerTriggerMode" to "AnswerTriggerPolicy → ListenService/AnswerGenerationCoordinator",
         "darkMode" to "MainActivity → ClassSentinelTheme",
         "localAsrModel" to "SettingsRepository → ListenServiceHandleFactory/SherpaOnnxStreamingEngine",
     )

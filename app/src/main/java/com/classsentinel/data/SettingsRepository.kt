@@ -17,6 +17,7 @@ import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
 import com.classsentinel.core.llm.AiProviderPreset
+import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.core.log.SafeLog
 import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.summary.SummaryTemplate
@@ -61,7 +62,8 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * sensitivityFlow/saveSensitivityPreset、rollcallSuppressMsFlow/saveRollcallSuppressMs、
  * questionSuppressMsFlow/saveQuestionSuppressMs、vadDbFlow/saveVadDb、
  * asrEngineFlow/saveAsrEngine、localAsrModelIdFlow/saveLocalAsrModel、
- * channelFlow/setChannelEnabled、aiSettingsFlow/saveAiSettings。
+ * answerTriggerModeFlow/saveAnswerTriggerMode、channelFlow/setChannelEnabled、
+ * aiSettingsFlow/saveAiSettings。
  */
 class SettingsRepository(
     private val dataStore: DataStore<Preferences>,
@@ -286,6 +288,11 @@ class SettingsRepository(
         .map { it[Keys.STREAM_OUTPUT] ?: true }
         .ioCatch { true }
 
+    /** Automatic answer policy; it is read from DataStore for every event by the live service. */
+    val answerTriggerModeFlow: Flow<AnswerTriggerMode> = dataStore.data
+        .map { AnswerTriggerMode.fromStored(it[Keys.ANSWER_TRIGGER_MODE]) }
+        .ioCatch { AnswerTriggerMode.DEFAULT }
+
     val autoSummaryFlow: Flow<Boolean> = dataStore.data
         .map { it[Keys.AUTO_SUMMARY] ?: false }
         .ioCatch { false }
@@ -457,6 +464,10 @@ class SettingsRepository(
         dataStore.edit { it[Keys.STREAM_OUTPUT] = enabled }
     }
 
+    suspend fun saveAnswerTriggerMode(mode: AnswerTriggerMode) {
+        dataStore.edit { it[Keys.ANSWER_TRIGGER_MODE] = mode.storedValue }
+    }
+
     suspend fun saveAutoSummary(enabled: Boolean) {
         dataStore.edit { it[Keys.AUTO_SUMMARY] = enabled }
     }
@@ -544,6 +555,7 @@ class SettingsRepository(
         if (p[Keys.ANSWER_LENGTH] == null) p[Keys.ANSWER_LENGTH] = "mid"
         if (p[Keys.ANSWER_STYLE] == null) p[Keys.ANSWER_STYLE] = "terseness"
         if (p[Keys.STREAM_OUTPUT] == null) p[Keys.STREAM_OUTPUT] = true
+        if (p[Keys.ANSWER_TRIGGER_MODE] == null) p[Keys.ANSWER_TRIGGER_MODE] = AnswerTriggerMode.DEFAULT.storedValue
         if (p[Keys.AUTO_SUMMARY] == null) p[Keys.AUTO_SUMMARY] = false
         if (p[Keys.SUMMARY_TEMPLATE_ID] == null) p[Keys.SUMMARY_TEMPLATE_ID] = SummaryTemplates.DEFAULT_ID
         if (p[Keys.SUMMARY_CUSTOM_PROMPT] == null) p[Keys.SUMMARY_CUSTOM_PROMPT] = ""
@@ -614,6 +626,7 @@ private object Keys {
     val ANSWER_LENGTH = stringPreferencesKey("answer_length")
     val ANSWER_STYLE = stringPreferencesKey("answer_style")
     val STREAM_OUTPUT = booleanPreferencesKey("stream_output")
+    val ANSWER_TRIGGER_MODE = stringPreferencesKey("answer_trigger_mode")
     val AUTO_SUMMARY = booleanPreferencesKey("auto_summary")
     val SUMMARY_TEMPLATE_ID = stringPreferencesKey("summary_template_id")
     val SUMMARY_CUSTOM_PROMPT = stringPreferencesKey("summary_custom_prompt")
