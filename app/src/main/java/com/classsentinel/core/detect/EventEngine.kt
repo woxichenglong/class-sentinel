@@ -15,6 +15,8 @@ data class ClassEvent(
     val ts: Long,
     val scope: EventScope = if (type == EventType.QUESTION) EventScope.CLASS_OPEN else EventScope.ROLLCALL,
     val reason: String = "",
+    /** Canonical configured target when target evidence identified one; transcript remains raw. */
+    val targetName: String? = null,
 )
 
 /**
@@ -109,7 +111,11 @@ class EventEngine(
     }
 
     /** Processes authoritative final text; partial hypotheses must never call this method. */
-    fun processFinal(final: FinalTranscript, ts: Long = System.currentTimeMillis()): ClassEvent? {
+    fun processFinal(
+        final: FinalTranscript,
+        ts: Long = System.currentTimeMillis(),
+        personalizedTarget: PersonalizedNameResolution? = null,
+    ): ClassEvent? {
         val earlyRollcall = provisionalRollcallIds.remove(final.utteranceId)
         if (final.text.isBlank() || !processedFinalIds.add(final.utteranceId)) return null
         val window = finalWindow.add(final)
@@ -119,7 +125,17 @@ class EventEngine(
         // Use only the current final for event classification. The rolling window is context for
         // the persisted event/answer, not evidence that an old name targets this new sentence.
         val question = QuestionDetector.detectAnswerable(final.text, sens.questionWordLevel)
+        val canonicalTargetName = personalizedTarget
+            ?.takeIf { it.confidence == NameTargetConfidence.CONFIRMED }
+            ?.targetName
         val nameHit = nameMatcher.detect(final.text, sens)
+            ?: canonicalTargetName?.let {
+                NameMatcher.Hit(
+                    name = it,
+                    matched = personalizedTarget?.matchedText ?: it,
+                    score = personalizedTarget?.score ?: 1.0,
+                )
+            }
         val targetedNameHit = questionTargetMatcher.detect(final.text)
 
         // A confirming final commits the provisional alert to the authoritative suppression clock.
@@ -139,6 +155,7 @@ class EventEngine(
                     ts = ts,
                     scope = EventScope.DIRECT,
                     reason = question.reason,
+                    targetName = canonicalTargetName ?: targetedNameHit?.name,
                 )
             }
             return null
@@ -156,6 +173,7 @@ class EventEngine(
                     ts = ts,
                     scope = EventScope.ROLLCALL,
                     reason = "NAME_ONLY",
+                    targetName = canonicalTargetName ?: it.name,
                 )
             }
             if (confirmedRollcallTs == 0L || ts - confirmedRollcallTs >= sens.rollcallSuppressMs) {
@@ -167,6 +185,7 @@ class EventEngine(
                     ts = ts,
                     scope = EventScope.ROLLCALL,
                     reason = "NAME_ONLY",
+                    targetName = canonicalTargetName ?: it.name,
                 )
             }
             return null // 抑制窗口内；命中点名时不降级为提问

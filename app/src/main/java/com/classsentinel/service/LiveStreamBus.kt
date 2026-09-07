@@ -1,6 +1,8 @@
 package com.classsentinel.service
 
 import com.classsentinel.core.detect.ClassEvent
+import com.classsentinel.core.detect.NameTargetConfidence
+import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.llm.AnswerResult
 import com.classsentinel.core.log.SafeLog
 import com.classsentinel.core.pipeline.PipelineState
@@ -82,6 +84,10 @@ object LiveStreamBus {
     private val _events = MutableStateFlow<List<ClassEvent>>(emptyList())
     /** 最近事件列表（新→旧顺位追加） */
     val events: StateFlow<List<ClassEvent>> = _events
+
+    private val _suspectedNameTarget = MutableStateFlow<PersonalizedNameTargetEvent?>(null)
+    /** Latest suspected personalized name target; process-local and intentionally non-historical. */
+    val suspectedNameTarget: StateFlow<PersonalizedNameTargetEvent?> = _suspectedNameTarget
 
     /** 管线状态（Idle/Listening/Error） */
     val pipelineState = MutableStateFlow<PipelineState>(PipelineState.Idle)
@@ -187,6 +193,13 @@ object LiveStreamBus {
         _events.value = (_events.value + event).takeLast(MAX)
     }
 
+    /** Publish only the SUSPECT branch to Live UI; it never enters alerts or answer generation. */
+    fun pushSuspectedNameTarget(event: PersonalizedNameTargetEvent) {
+        if (event.confidence == NameTargetConfidence.SUSPECT) {
+            _suspectedNameTarget.value = event
+        }
+    }
+
     fun pushState(state: PipelineState) {
         pipelineState.value = state
     }
@@ -196,6 +209,7 @@ object LiveStreamBus {
         _transcript.value = emptyList()
         _latestAnswer.value = null
         _events.value = emptyList()
+        _suspectedNameTarget.value = null
         LEGACY_UTTERANCE_ID = -1
     }
 

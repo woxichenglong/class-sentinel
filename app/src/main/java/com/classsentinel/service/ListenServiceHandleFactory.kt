@@ -14,6 +14,9 @@ import com.classsentinel.core.detect.EventEngine
 import com.classsentinel.core.detect.EventType
 import com.classsentinel.core.detect.FinalTranscript
 import com.classsentinel.core.detect.NameMatcher
+import com.classsentinel.core.detect.NameTargetConfidence
+import com.classsentinel.core.detect.PersonalizedNameResolver
+import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.pipeline.StreamingListenPipeline
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.core.speech.SherpaOnnxRecognizerFactory
@@ -105,6 +108,7 @@ internal class ListenServiceHandleFactory(
             scope = scope,
             pipeline = pipeline,
             eventEngine = eventEngine,
+            personalizedNameResolver = PersonalizedNameResolver(AppConfig.names),
             alert = alert,
             questionAlertPolicy = QuestionAlertPolicy {
                 settings.questionAlertModeFlow.first()
@@ -210,6 +214,7 @@ internal class SessionPipelineAdapter(
     private val scope: CoroutineScope,
     private val pipeline: StreamingListenPipeline,
     private val eventEngine: EventEngine,
+    private val personalizedNameResolver: PersonalizedNameResolver? = null,
     private val alert: AlertCoordinator,
     private val questionAlertPolicy: QuestionAlertPolicy = QuestionAlertPolicy {
         QuestionAlertMode.ALL_QUESTIONS
@@ -332,6 +337,24 @@ internal class SessionPipelineAdapter(
             ),
             timestampMs = chunkTs,
         )
+        val personalizedTarget = personalizedNameResolver?.resolve(segment)
+        if (personalizedTarget?.confidence == NameTargetConfidence.SUSPECT) {
+            val targetName = personalizedTarget.targetName
+            val matchedText = personalizedTarget.matchedText
+            if (targetName != null && matchedText != null) {
+                LiveStreamBus.pushSuspectedNameTarget(
+                    PersonalizedNameTargetEvent(
+                        transcript = segment,
+                        targetName = targetName,
+                        matchedText = matchedText,
+                        confidence = personalizedTarget.confidence,
+                        score = personalizedTarget.score,
+                        timestampMs = chunkTs,
+                    ),
+                )
+            }
+            return
+        }
         eventEngine.processFinal(
             FinalTranscript(
                 utteranceId = final.utteranceId,
@@ -340,6 +363,7 @@ internal class SessionPipelineAdapter(
                 endOffsetMs = final.endOffsetMs,
             ),
             ts = chunkTs,
+            personalizedTarget = personalizedTarget,
         )?.let { event ->
             LiveStreamBus.pushEvent(event)
             val contextEvent = event.copy(
