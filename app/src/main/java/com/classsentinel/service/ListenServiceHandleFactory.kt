@@ -18,14 +18,20 @@ import com.classsentinel.core.detect.NameTargetConfidence
 import com.classsentinel.core.detect.PersonalizedNameResolver
 import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.pipeline.StreamingListenPipeline
+import com.classsentinel.core.speech.ModelDistribution
+import com.classsentinel.core.speech.ModelIntegrityVerifier
+import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.core.speech.SherpaOnnxRecognizerFactory
 import com.classsentinel.core.speech.SherpaOnnxStreamingEngine
 import com.classsentinel.core.speech.ModelProfile
 import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.speech.ProfileBoundStreamingSpeechEngine
+import com.classsentinel.core.speech.RuntimeAsrEngineCreation
+import com.classsentinel.core.speech.RuntimeAsrEngineStarter
+import com.classsentinel.core.speech.RuntimeAsrModelResolver
+import com.classsentinel.core.speech.RuntimeAsrModelSelection
 import com.classsentinel.core.speech.StreamingAsrEvent
-import com.classsentinel.core.speech.StreamingSpeechEngine
 import com.classsentinel.data.AppDatabase
 import com.classsentinel.data.CourseRepository
 import com.classsentinel.data.STALE_RUNNING_COURSE_TIMEOUT_MS
@@ -69,15 +75,12 @@ internal class ListenServiceHandleFactory(
         } catch (e: Exception) {
             throw IllegalStateException("配置加载失败")
         }
-        val selectedProfile = ModelProfiles.resolveDaily(settings.localAsrModelIdFlow.first())
-
-        val modelDirectory = withContext(Dispatchers.IO) {
-            SherpaModelInstaller(
-                filesDir = context.applicationContext.filesDir,
-                profile = selectedProfile,
-                assetOpener = context.applicationContext.assets::open,
-            ).install()
-        }
+        val resolver = RuntimeAsrModelResolver(
+            filesDir = context.applicationContext.filesDir,
+            readinessChecker = ModelReadinessChecker(context.applicationContext.filesDir),
+        )
+        val modelSelection = resolver.resolve(settings.preferredLocalModelIdRawFlow.first())
+        val runtimeEngine = createRuntimeAsrEngine(context, modelSelection)
         val db = AppDatabase.get(context)
         // 新会话开始前先收敛旧 RUNNING 课程；pending 音频不依赖前台进程存活。
         val repository = CourseRepository(db)
@@ -85,7 +88,7 @@ internal class ListenServiceHandleFactory(
             repository.abortStale(System.currentTimeMillis() - STALE_RUNNING_COURSE_TIMEOUT_MS)
         }
         val store = CourseSessionStoreAdapter(repository)
-        val speech = createLiveStreamingSpeechEngine(modelDirectory, selectedProfile)
+        val speech = runtimeEngine.engine
         val pipeline = StreamingListenPipeline(
             streamer = AudioStreamer(context = context),
             speech = speech,
@@ -130,6 +133,46 @@ internal class ListenServiceHandleFactory(
             context = context,
             db = db,
         )
+    }
+}
+
+private suspend fun createRuntimeAsrEngine(
+    context: Context,
+    selection: RuntimeAsrModelSelection,
+): RuntimeAsrEngineCreation = RuntimeAsrEngineStarter(
+    prepareDirectory = { profile -> prepareRuntimeModelDirectory(context, profile) },
+    initializeModel = { directory, profile ->
+        withContext(Dispatchers.IO) {
+            val recognizer = SherpaOnnxRecognizerFactory.create(directory, profile)
+            try {
+                // Preflight native construction so a bad Remote model falls back before START.
+            } finally {
+                recognizer.release()
+            }
+        }
+    },
+    createEngine = ::createLiveStreamingSpeechEngine,
+).create(selection)
+
+private suspend fun prepareRuntimeModelDirectory(
+    context: Context,
+    profile: ModelProfile,
+): File = withContext(Dispatchers.IO) {
+    when (profile.distribution) {
+        ModelDistribution.Bundled -> SherpaModelInstaller(
+            filesDir = context.applicationContext.filesDir,
+            profile = profile,
+            assetOpener = context.applicationContext.assets::open,
+        ).install()
+
+        is ModelDistribution.Remote -> {
+            val directory = ModelIntegrityVerifier.resolveTargetDirectory(
+                context.applicationContext.filesDir,
+                profile,
+            )
+            check(ModelIntegrityVerifier.verify(profile, directory)) { "ASR_MODEL_NOT_READY" }
+            directory
+        }
     }
 }
 

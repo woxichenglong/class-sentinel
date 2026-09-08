@@ -260,6 +260,11 @@ class SettingsRepository(
         .map { ModelProfiles.resolvePreferred(it[Keys.PREFERRED_LOCAL_MODEL_ID]).id }
         .ioCatch { ModelProfiles.ZIPFORMER_ZH_14M.id }
 
+    /** Raw preference used by runtime resolver to distinguish missing/unknown from 14M. */
+    val preferredLocalModelIdRawFlow: Flow<String?> = dataStore.data
+        .map { it[Keys.PREFERRED_LOCAL_MODEL_ID] }
+        .ioCatch { null }
+
     /** 单通道开关流（key ∈ vibrate/ringtone/notify/flash/ear） */
     fun channelFlow(key: String): Flow<Boolean> = dataStore.data
         .map { it[Channels.prefKey(key)] ?: Channels.DEFAULT.contains(key) }

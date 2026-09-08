@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-09-06T11:26:33Z",
-  "updated_at": "2026-09-08T14:31:14Z",
+  "updated_at": "2026-09-08T15:13:55Z",
   "files": {
     ".gitattributes": {
       "sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476",
@@ -64,9 +64,9 @@
       "normalized_sha256": "63f519e15726f4c4f830bd958f694c84fecb4e0a4cacc527d2696bb71ef95ada"
     },
     "aoci.code.txt": {
-      "sha256": "1b54b1e44d30f98c3c7cae0484d22e8a1731e971358c779353e6118613bdd9ee",
-      "size": 118883,
-      "normalized_sha256": "1b54b1e44d30f98c3c7cae0484d22e8a1731e971358c779353e6118613bdd9ee"
+      "sha256": "9952ef317089fb569c68ba87271fe614c7b0b104526bad933d505e66247070a1",
+      "size": 120047,
+      "normalized_sha256": "9952ef317089fb569c68ba87271fe614c7b0b104526bad933d505e66247070a1"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -420,6 +420,11 @@
       "size": 7976,
       "normalized_sha256": "73bdac6d18c5fdb5b4ab137f5991808513b61c5b42f1275b4d4e92354960baca"
     },
+    "app/src/main/java/com/classsentinel/core/speech/RuntimeAsrModelResolver.kt": {
+      "sha256": "ff05a83f607bfcd55013eeb5210187ba4d0b8ac0d8de3fde9a2037e5e1458e5b",
+      "size": 4629,
+      "normalized_sha256": "ff05a83f607bfcd55013eeb5210187ba4d0b8ac0d8de3fde9a2037e5e1458e5b"
+    },
     "app/src/main/java/com/classsentinel/core/speech/SegmentSpeechEngine.kt": {
       "sha256": "e4cb7a8138e545898a60c29b9a6af180b1a2a5025a87af352f3c2df5d6259f06",
       "size": 894,
@@ -556,9 +561,9 @@
       "normalized_sha256": "2c1e2a05111bbc0b29d9da468e1b4a7c8f2a5ccb90ec9cffd10a248d33f46a4c"
     },
     "app/src/main/java/com/classsentinel/data/SettingsRepository.kt": {
-      "sha256": "f0676d842d5b1a4518e2320202ba0f02f593c2f832b5a9983eb832fe22667f32",
-      "size": 34653,
-      "normalized_sha256": "f0676d842d5b1a4518e2320202ba0f02f593c2f832b5a9983eb832fe22667f32"
+      "sha256": "11072c3edbfaf6b3bd0141f299274c79fd3777f0adf1761ce1d4595cf656b5b3",
+      "size": 34892,
+      "normalized_sha256": "11072c3edbfaf6b3bd0141f299274c79fd3777f0adf1761ce1d4595cf656b5b3"
     },
     "app/src/main/java/com/classsentinel/data/StudyArtifactDao.kt": {
       "sha256": "7e29ff9be5a83c7a2fa9717060c8c89d143cc64124c3977e2fc6e7b9ad543cf2",
@@ -636,9 +641,9 @@
       "normalized_sha256": "8739875306b8958726fbb35071206a51e24171bf7728d65add53f5ef7c8eb4e7"
     },
     "app/src/main/java/com/classsentinel/service/ListenServiceHandleFactory.kt": {
-      "sha256": "a28eab93930a58416c539f61f217b92a2fe543a1c70bb0257a28cf56e2e16eb7",
-      "size": 17654,
-      "normalized_sha256": "a28eab93930a58416c539f61f217b92a2fe543a1c70bb0257a28cf56e2e16eb7"
+      "sha256": "49d2ded90022990773449f214b4fc10d956810f9f7ab4105626941dece67a988",
+      "size": 19400,
+      "normalized_sha256": "49d2ded90022990773449f214b4fc10d956810f9f7ab4105626941dece67a988"
     },
     "app/src/main/java/com/classsentinel/service/ListenServiceSession.kt": {
       "sha256": "20a41023e1233a3e286f63e84c0113d3c9eed034b7cb4246606302c84c4fa715",
@@ -1029,6 +1034,11 @@
       "sha256": "93ab65b835357ab37ebf8ff8af62c1414b903c309d69323c49073558bc398c6c",
       "size": 7738,
       "normalized_sha256": "93ab65b835357ab37ebf8ff8af62c1414b903c309d69323c49073558bc398c6c"
+    },
+    "app/src/test/java/com/classsentinel/core/speech/RuntimeAsrModelResolverTest.kt": {
+      "sha256": "50d63db80386368a3e185e062d1e21ef4884362f3143e525bd14575d412595ed",
+      "size": 6805,
+      "normalized_sha256": "50d63db80386368a3e185e062d1e21ef4884362f3143e525bd14575d412595ed"
     },
     "app/src/test/java/com/classsentinel/core/speech/SegmentSpeechRouterTest.kt": {
       "sha256": "2a26a2d4c6df8a78edf65eebb1df35e7c8d10a1b29e79b42fe61694a860c3513",
