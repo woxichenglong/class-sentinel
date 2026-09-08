@@ -46,6 +46,6 @@ object SettingConsumerMatrix {
         "answerTriggerMode" to "AnswerTriggerPolicy → ListenService/AnswerGenerationCoordinator",
         "questionAlertMode" to "QuestionAlertPolicy → SessionPipelineAdapter/AlertCoordinator",
         "darkMode" to "MainActivity → ClassSentinelTheme",
-        "localAsrModel" to "SettingsRepository → ListenServiceHandleFactory/SherpaOnnxStreamingEngine",
+        "localAsrModel" to "SettingsRepository.preferredLocalModelIdFlow → model cards; runtime eligibility remains separate",
     )
 }

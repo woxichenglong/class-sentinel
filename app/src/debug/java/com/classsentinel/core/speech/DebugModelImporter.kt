@@ -20,16 +20,42 @@ internal class DebugModelImporter(
         val sourcePrefix = sourceRoot.path + File.separator
         val allowedNames = profile.artifact.files.map { it.name }.toSet()
 
-        return SherpaModelInstaller(
-            filesDir = filesDir,
-            profile = profile,
-            assetOpener = { assetPath ->
-                val fileName = assetPath.substringAfterLast('/')
-                require(fileName in allowedNames) { "ASR_MODEL_FILE_NOT_ALLOWED" }
-                val sourceFile = File(sourceRoot, fileName).canonicalFile
-                require(sourceFile.path.startsWith(sourcePrefix)) { "ASR_MODEL_SOURCE_OUTSIDE_ROOT" }
-                FileInputStream(sourceFile)
-            },
-        ).install()
+        return when (profile.distribution) {
+            ModelDistribution.Bundled -> SherpaModelInstaller(
+                filesDir = filesDir,
+                profile = profile,
+                assetOpener = { assetPath ->
+                    val fileName = assetPath.substringAfterLast('/')
+                    openSourceFile(fileName, allowedNames, sourceRoot, sourcePrefix)
+                },
+            ).install()
+
+            is ModelDistribution.Remote -> {
+                val localSourceProfile = profile.copy(
+                    distribution = ModelDistribution.Remote(
+                        files = allowedNames.associateWith { it },
+                    ),
+                )
+                RemoteModelInstaller(
+                    filesDir = filesDir,
+                    profile = localSourceProfile,
+                    source = RemoteModelSource { location ->
+                        openSourceFile(location, allowedNames, sourceRoot, sourcePrefix)
+                    },
+                ).install()
+            }
+        }
+    }
+
+    private fun openSourceFile(
+        fileName: String,
+        allowedNames: Set<String>,
+        sourceRoot: File,
+        sourcePrefix: String,
+    ): FileInputStream {
+        require(fileName in allowedNames) { "ASR_MODEL_FILE_NOT_ALLOWED" }
+        val sourceFile = File(sourceRoot, fileName).canonicalFile
+        require(sourceFile.path.startsWith(sourcePrefix)) { "ASR_MODEL_SOURCE_OUTSIDE_ROOT" }
+        return FileInputStream(sourceFile)
     }
 }

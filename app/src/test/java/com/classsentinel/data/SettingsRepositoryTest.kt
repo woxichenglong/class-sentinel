@@ -21,6 +21,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -157,13 +158,22 @@ class SettingsRepositoryTest {
         assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
         assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, repo().localAsrModelIdFlow.first())
 
-        var rejectedExperimentalProfile = false
-        try {
-            r.saveLocalAsrModel(ModelProfiles.X_ASR_960.id)
-        } catch (error: IllegalArgumentException) {
-            rejectedExperimentalProfile = error.message == "UNKNOWN_LOCAL_ASR_MODEL"
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { r.saveLocalAsrModel(ModelProfiles.X_ASR_960.id) }
         }
-        assertTrue(rejectedExperimentalProfile)
+        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
+        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, repo().localAsrModelIdFlow.first())
+    }
+
+    @Test
+    fun `preferred model persists remote choice without changing runtime model`() = runBlocking {
+        val r = repo()
+        r.saveLocalAsrModel(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id)
+        r.savePreferredLocalModel(ModelProfiles.X_ASR_480.id)
+
+        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
+        assertEquals(ModelProfiles.X_ASR_480.id, r.preferredLocalModelIdFlow.first())
+        assertEquals(ModelProfiles.X_ASR_480.id, repo().preferredLocalModelIdFlow.first())
     }
 
     @Test

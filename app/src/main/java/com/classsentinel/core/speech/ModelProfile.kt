@@ -103,6 +103,23 @@ internal data class ModelCapabilities(
     val codeSwitch: Boolean,
 )
 
+/** Describes whether an artifact is bundled in the APK or supplied by a remote source. */
+internal sealed interface ModelDistribution {
+    data object Bundled : ModelDistribution
+
+    /**
+     * Remote locations are deliberately injectable. An empty map means no production locator has
+     * been configured yet; it avoids guessing an upstream download URL from a pinned revision.
+     */
+    data class Remote(
+        val files: Map<String, String>,
+    ) : ModelDistribution {
+        init {
+            require(files.values.all { it.isNotBlank() }) { "MODEL_REMOTE_LOCATION_INVALID" }
+        }
+    }
+}
+
 /** Single source of truth for one installable/evaluable ASR model variant. */
 internal data class ModelProfile(
     val id: String,
@@ -112,17 +129,33 @@ internal data class ModelProfile(
     val capabilities: ModelCapabilities,
     val evaluationLabel: String,
     val displayName: String = evaluationLabel,
+    val distribution: ModelDistribution = ModelDistribution.Bundled,
 ) {
     init {
         require(id.matches(ID_PATTERN)) { "MODEL_PROFILE_ID_INVALID" }
         require(version.isNotBlank()) { "MODEL_PROFILE_VERSION_INVALID" }
         require(evaluationLabel.isNotBlank()) { "MODEL_PROFILE_LABEL_INVALID" }
+        if (distribution is ModelDistribution.Remote) {
+            val artifactNames = artifact.files.map { it.name }.toSet()
+            require(distribution.files.keys.all { it in artifactNames }) {
+                "MODEL_REMOTE_FILE_INVALID"
+            }
+        }
     }
 
     private companion object {
         val ID_PATTERN = Regex("[a-z0-9][a-z0-9._-]*")
     }
 }
+
+private const val X_ASR_REVISION = "689ff18c584d29910da37b6fe904db0c1489c9d1"
+private const val X_ASR_HUB_BASE_URL = "https://huggingface.co/GilgameshWind/X-ASR-zh-en"
+
+private fun xAsrRemoteFiles(profile: ModelProfile): Map<String, String> =
+    profile.artifact.files.associate { spec ->
+        spec.name to
+            "$X_ASR_HUB_BASE_URL/resolve/${profile.version}/${profile.artifact.directory}/${spec.name}?download=true"
+    }
 
 /** Checked-in profiles. New model variants must add a profile instead of factory branches. */
 internal object ModelProfiles {
@@ -185,6 +218,7 @@ internal object ModelProfiles {
         ),
         evaluationLabel = "baseline-zh-14m",
         displayName = "Zipformer 中文 14M（稳定默认）",
+        distribution = ModelDistribution.Bundled,
     )
 
     val SMALL_BILINGUAL_ZH_EN = ModelProfile(
@@ -253,11 +287,12 @@ internal object ModelProfiles {
         ),
         evaluationLabel = "small-bilingual-zh-en",
         displayName = "Zipformer 中英 Small（轻量）",
+        distribution = ModelDistribution.Bundled,
     )
 
     val X_ASR_480 = ModelProfile(
         id = "x-asr-480",
-        version = "689ff18c584d29910da37b6fe904db0c1489c9d1",
+        version = X_ASR_REVISION,
         artifact = ModelArtifact(
             directory = "x-asr-zh-en-480ms",
             encoder = ModelFileSpec(
@@ -321,11 +356,13 @@ internal object ModelProfiles {
         ),
         evaluationLabel = "x-asr-zh-en-480ms",
         displayName = "X-ASR 中英 480ms（质量优先）",
-    )
+    ).let { profile ->
+        profile.copy(distribution = ModelDistribution.Remote(files = xAsrRemoteFiles(profile)))
+    }
 
     val X_ASR_960 = ModelProfile(
         id = "x-asr-960",
-        version = "689ff18c584d29910da37b6fe904db0c1489c9d1",
+        version = X_ASR_REVISION,
         artifact = ModelArtifact(
             directory = "x-asr-zh-en-960ms",
             encoder = ModelFileSpec(
@@ -389,7 +426,9 @@ internal object ModelProfiles {
         ),
         evaluationLabel = "x-asr-zh-en-960ms",
         displayName = "X-ASR 中英 960ms（性能优先）",
-    )
+    ).let { profile ->
+        profile.copy(distribution = ModelDistribution.Remote(files = xAsrRemoteFiles(profile)))
+    }
 
     /** All pinned profiles available to evaluation and debug-only model import. */
     val EVALUATION_CATALOG: List<ModelProfile> = listOf(
@@ -399,7 +438,7 @@ internal object ModelProfiles {
         X_ASR_960,
     )
 
-    /** Profiles that may be selected for ordinary local listening after live endpoint smoke. */
+    /** Profiles eligible for the current classroom runtime. */
     val DAILY_SELECTABLE: List<ModelProfile> = listOf(
         ZIPFORMER_ZH_14M,
         SMALL_BILINGUAL_ZH_EN,
@@ -408,4 +447,8 @@ internal object ModelProfiles {
     /** Unknown persisted values fail closed to the stable baseline. */
     fun resolveDaily(id: String?): ModelProfile =
         DAILY_SELECTABLE.firstOrNull { it.id == id } ?: ZIPFORMER_ZH_14M
+
+    /** User preference catalog; selecting a Remote profile does not make it runtime eligible. */
+    fun resolvePreferred(id: String?): ModelProfile =
+        EVALUATION_CATALOG.firstOrNull { it.id == id } ?: ZIPFORMER_ZH_14M
 }

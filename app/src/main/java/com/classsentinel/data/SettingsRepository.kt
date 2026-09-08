@@ -255,6 +255,11 @@ class SettingsRepository(
         .map { ModelProfiles.resolveDaily(it[Keys.LOCAL_ASR_MODEL_ID]).id }
         .ioCatch { ModelProfiles.ZIPFORMER_ZH_14M.id }
 
+    /** User preference catalog; it is intentionally separate from runtime eligibility. */
+    val preferredLocalModelIdFlow: Flow<String> = dataStore.data
+        .map { ModelProfiles.resolvePreferred(it[Keys.PREFERRED_LOCAL_MODEL_ID]).id }
+        .ioCatch { ModelProfiles.ZIPFORMER_ZH_14M.id }
+
     /** 单通道开关流（key ∈ vibrate/ringtone/notify/flash/ear） */
     fun channelFlow(key: String): Flow<Boolean> = dataStore.data
         .map { it[Channels.prefKey(key)] ?: Channels.DEFAULT.contains(key) }
@@ -408,6 +413,13 @@ class SettingsRepository(
         SafeLog.d("settings_saved", mapOf("module" to "SettingsRepository", "localModel" to profile.id))
     }
 
+    suspend fun savePreferredLocalModel(profileId: String) {
+        val profile = ModelProfiles.EVALUATION_CATALOG.firstOrNull { it.id == profileId }
+            ?: throw IllegalArgumentException("UNKNOWN_PREFERRED_LOCAL_MODEL")
+        dataStore.edit { it[Keys.PREFERRED_LOCAL_MODEL_ID] = profile.id }
+        SafeLog.d("settings_saved", mapOf("module" to "SettingsRepository", "preferredModel" to profile.id))
+    }
+
     suspend fun setChannelEnabled(key: String, enabled: Boolean) {
         if (!Channels.isKnown(key)) return
         val prefKey = Channels.prefKey(key)
@@ -559,6 +571,9 @@ class SettingsRepository(
         if (p[Keys.SEGMENT_MAX_SEC] == null) p[Keys.SEGMENT_MAX_SEC] = Constants.SEGMENT_MAX_SEC_DEFAULT
         if (p[Keys.ASR_ENGINE] == null) p[Keys.ASR_ENGINE] = Constants.ASR_ENGINE_DEFAULT
         if (p[Keys.LOCAL_ASR_MODEL_ID] == null) p[Keys.LOCAL_ASR_MODEL_ID] = ModelProfiles.ZIPFORMER_ZH_14M.id
+        if (p[Keys.PREFERRED_LOCAL_MODEL_ID] == null) {
+            p[Keys.PREFERRED_LOCAL_MODEL_ID] = ModelProfiles.resolvePreferred(p[Keys.LOCAL_ASR_MODEL_ID]).id
+        }
         if (p[Keys.LOCKSCREEN_NOTIFY] == null) p[Keys.LOCKSCREEN_NOTIFY] = true
         if (p[Keys.VIBRATE_MODE] == null) p[Keys.VIBRATE_MODE] = "normal"
         if (p[Keys.AI_BASE_URL] == null) p[Keys.AI_BASE_URL] = Constants.AI_BASE_URL_DEFAULT
@@ -624,6 +639,7 @@ private object Keys {
     val SEGMENT_MAX_SEC = intPreferencesKey("segment_max_sec")
     val ASR_ENGINE = stringPreferencesKey("asr_engine")
     val LOCAL_ASR_MODEL_ID = stringPreferencesKey("local_asr_model_id")
+    val PREFERRED_LOCAL_MODEL_ID = stringPreferencesKey("preferred_local_model_id")
     val CH_VIBRATE = booleanPreferencesKey("ch_vibrate")
     val CH_RINGTONE = booleanPreferencesKey("ch_ringtone")
     val CH_NOTIFY = booleanPreferencesKey("ch_notify")

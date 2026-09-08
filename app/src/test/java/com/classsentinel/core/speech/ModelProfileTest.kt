@@ -226,7 +226,7 @@ class ModelProfileTest {
     }
 
     @Test
-    fun `daily catalog excludes x asr until live endpoint smoke while evaluation keeps all profiles`() {
+    fun `runtime catalog keeps bundled profiles while preferred catalog keeps all profiles`() {
         assertEquals(
             listOf(
                 "sherpa-zh-14m",
@@ -245,6 +245,7 @@ class ModelProfileTest {
         )
         assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, ModelProfiles.resolveDaily("unknown").id)
         assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, ModelProfiles.resolveDaily(ModelProfiles.X_ASR_960.id).id)
+        assertEquals(ModelProfiles.X_ASR_960.id, ModelProfiles.resolvePreferred(ModelProfiles.X_ASR_960.id).id)
         assertEquals("X-ASR 中英 960ms（性能优先）", ModelProfiles.X_ASR_960.displayName)
     }
 }

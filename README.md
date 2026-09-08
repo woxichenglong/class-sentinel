@@ -17,7 +17,7 @@
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | `AppDatabase` version 5 + `MIGRATION_1_2` / `MIGRATION_2_3` / `MIGRATION_3_4` / `MIGRATION_4_5` | v1→v5 migration 与课程/转写元数据/待处理音频/学习产物表保持一致 |
 | Android Lint | `./gradlew :app:lintDebug --rerun-tasks` | 文本报告为 `No issues found.` |
-| 模型 catalog | `ModelProfiles.DAILY_SELECTABLE` / `EVALUATION_CATALOG` | 日常 `sherpa-zh-14m`、`sherpa-small-bilingual-zh-en`；`x-asr-480` / `x-asr-960` 仅 evaluation/debug，数量以源码 catalog 为准 |
+| 模型 catalog | `ModelProfiles.DAILY_SELECTABLE` / `EVALUATION_CATALOG` | 本地选择器展示 `sherpa-zh-14m`、`sherpa-small-bilingual-zh-en`、`x-asr-480`、`x-asr-960`；X-ASR 需先导入模型文件，数量以源码 catalog 为准 |
 | 即时回答 | `AnswerService` → `AnswerResultHandler` → `LiveStreamBus` / system notification | 流式状态在 App 内答案卡更新，终态答案按请求类型决定是否写 Room |
 | CI | `.github/workflows/android-ci.yml` | GitHub Actions workflow 名为 `Android CI`，保留 unit test、lint、debug build |
 | K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 本轮未执行；当前无在线设备，JVM/APK/CI 不等同于真机验收 |
@@ -33,7 +33,7 @@
 - `AudioRecord` 以 16 kHz 单声道 PCM 采集；实时主链经 `StreamingSpeechEngine` 进入本地 sherpa-onnx 连续流式识别，保留 decoder 状态，不由 VAD 切成 HTTP 请求。
 - `StreamingAsrEvent` 区分可替换的 `Partial`、空 endpoint/flush 的 `UtteranceEnded` 和权威的 `Final`；只有非空 `Final` 进入事件检测、历史和 LLM，失败事件只携带封闭的安全错误类别。
 - 旧 `VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和讯飞适配器暂留在 WAV 导入/pending recovery 边界；它们不作为实时课堂链路的 fallback。
-- 日常本地模型可在设置页选择 14M baseline 或 small bilingual；默认仍为 14M。X-ASR 480/960 保留在 evaluation/debug catalog，需先通过 debug importer 准备并完成 live endpoint-on 真机 smoke 后才进入日常选择；X-ASR 大文件不打包。切换只对下一次监听生效。
+- 本地模型可在设置页选择 14M baseline、small bilingual、X-ASR 480/960；默认仍为 14M。X-ASR 大文件不打包，需先通过 debug importer 准备对应模型文件；切换只对下一次监听生效。
 - 点名提醒支持 Partial exact-name fast path：仅文本精确命中且 `score=1.0` 的姓名会立即提醒；Partial 不落库、不触发 QUESTION/LLM，同一 utterance 的 Final 仍负责权威落库并抑制重复提醒；provisional 不推进确认抑制时钟。
 - Quick Settings Tile 与 Home 共用本地模型 readiness preflight；云 ASR key 不参与 live 启动资格，模型未准备成功前不会发 START。问题 suppression 只抑制同 scope 的相同 normalized fingerprint。
 - 点名名单将展示姓名、可直接称呼的昵称和仅用于 ASR 容错的变体分层保存；DIRECT 提问只接受前两者，并要求句首/呼语边界及定向续接词，避免把同音字、嵌入长姓名或普通姓名提及当成对当前学生发问。普通 ROLLCALL 仍可使用 ASR 变体；提问检测和滚动课堂上下文均有代码路径和 JVM 测试，实时提醒当前只保留振动与系统通知。
@@ -102,7 +102,7 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 | 分组 | 已接入行为 |
 |---|---|
 | 点名/提问 | 展示姓名/可称呼昵称/ASR 容错变体、中文定向前缀与局部缺席判断、匹配灵敏度、点名/提问抑制窗口、提问词等级 |
-| 本地 ASR | 可选择日常 streaming profile；模型按所选 profile 安装/复用，旧 VAD/HTTP ASR 只在导入/恢复边界使用 |
+| 本地 ASR | 可选择本地 streaming profile；模型按所选 profile 安装/复用，旧 VAD/HTTP ASR 只在导入/恢复边界使用 |
 | 提醒 | 振动与系统通知两个通道、锁屏内容固定隐藏、震动模式；不修改系统音量 |
 | AI | Base URL、AI key、模型、回答长度、答案风格、流式输出 |
 | 数据/通用 | 清空问答历史、跟随系统/深色/浅色模式 |
@@ -172,7 +172,7 @@ Windows 命令提示符或 PowerShell 可将 `./gradlew` 替换为 `gradlew.bat`
 1. 在引导中录入展示姓名；可称呼昵称用于定向提问，ASR 变体仅用于识别容错。
 2. 授予麦克风、通知权限；答案通过系统通知和 App 内答案卡显示。
 3. 在 AI 设置中选择预设并填写 AI key；ASR key 在“语音”分组单独填写。
-4. 在“本地转写”中选择日常模型；X-ASR 480/960 目前仅供 evaluation/debug，需先导入对应四文件并完成 live endpoint-on smoke。
+4. 在“本地转写”中选择四个本地模型之一；X-ASR 480/960 不随 APK 打包，需先导入对应四文件。
 5. 先用自检页确认权限和配置，再开始听讲。
 
 ## 项目结构
@@ -205,7 +205,7 @@ app/src/main/java/com/classsentinel/
 
 ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a user-selectable local sherpa-onnx streaming ASR profile, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate, a clean Android Lint report, and a successful debug APK build. Exact suite/test totals are derived from the generated XML reports rather than fixed in this document. Room schema version 5 uses the checked-in v1→v5 migrations. The live model selector supports the 14M baseline and small bilingual profile; X-ASR 480/960 remain in the evaluation/debug catalog until their live endpoint-on smoke is completed. X-ASR files are not bundled and must be prepared through the debug importer. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions and rollcall context per name occurrence rather than globally. Answer updates use the system notification plus an in-app answer card; this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate, a clean Android Lint report, and a successful debug APK build. Exact suite/test totals are derived from the generated XML reports rather than fixed in this document. Room schema version 5 uses the checked-in v1→v5 migrations. The live model selector exposes the 14M baseline, small bilingual, X-ASR 480, and X-ASR 960 profiles; the default remains the 14M baseline. X-ASR files are not bundled and must be prepared through the debug importer before listening. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions and rollcall context per name occurrence rather than globally. Answer updates use the system notification plus an in-app answer card; this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

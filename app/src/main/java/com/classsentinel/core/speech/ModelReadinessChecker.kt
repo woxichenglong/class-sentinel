@@ -16,7 +16,7 @@ internal class ModelReadinessChecker(
     private val filesDir: File,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val probe: (File, ModelProfile) -> Boolean = { root, profile ->
-        SherpaModelInstaller.isInstalled(root, profile)
+        ModelIntegrityVerifier.isInstalled(root, profile)
     },
 ) {
 
