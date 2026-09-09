@@ -1,10 +1,9 @@
 package com.classsentinel.core.speech
 
-import com.classsentinel.core.audio.VadSplitter
+import com.classsentinel.core.audio.WavSegment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.toList
+
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
@@ -42,10 +41,9 @@ class OpenAiCompatAsrEngineTest {
             apiKey = "sk-test",
             model = "TeleAI/TeleSpeechASR",
         )
-        val loud = ShortArray(8000) { 8000 }
-        val texts = engine.transcribe(flowOf(loud)).toList()
+        val text = engine.transcribeSegment(wavSegment()).getOrThrow()
 
-        assertEquals(listOf("今天讲傅里叶变换"), texts)
+        assertEquals("今天讲傅里叶变换", text)
 
         val req = server.takeRequest()
         assertTrue(req.path!!.contains("/audio/transcriptions"))
@@ -65,12 +63,10 @@ class OpenAiCompatAsrEngineTest {
             apiKey = "sk",
             model = "m",
         )
-        val loud = ShortArray(16000) { 8000 }
-        val quiet = ShortArray(16000) { 0 }
-        // 旧接口现在是 legacy adapter：VAD 分段 → 单段转写。若某段失败，
-        // typed AsrException 会沿 Flow 上抛（不静默跳过），因此这里只放成功段。
-        val texts = engine.transcribe(flowOf(loud, quiet, quiet, loud, quiet, quiet)).toList()
-        assertEquals(listOf("第一段", "第二段"), texts)
+        val first = engine.transcribeSegment(wavSegment(id = "s1", dataBytes = 16_000)).getOrThrow()
+        val second = engine.transcribeSegment(wavSegment(id = "s2", dataBytes = 32_000)).getOrThrow()
+
+        assertEquals(listOf("第一段", "第二段"), listOf(first, second))
         assertEquals(2, server.requestCount)
     }
 
@@ -90,7 +86,7 @@ class OpenAiCompatAsrEngineTest {
                 }
                 .build(),
         )
-        val seg = VadSplitter().segments(flowOf(ShortArray(8000) { 8000 })).toList()[0]
+        val seg = wavSegment()
         val thrown = withContext(Dispatchers.IO) {
             try {
                 engine.transcribeSegment(seg)
@@ -120,7 +116,7 @@ class OpenAiCompatAsrEngineTest {
                 }
                 .build(),
         )
-        val segment = VadSplitter().segments(flowOf(ShortArray(8000) { 8000 })).toList()[0]
+        val segment = wavSegment()
 
         val failure = engine.transcribeSegment(segment).exceptionOrNull()
 
@@ -130,4 +126,7 @@ class OpenAiCompatAsrEngineTest {
         assertEquals("network error", error.message)
         assertTrue(!error.message.contains("classroom"))
     }
+
+    private fun wavSegment(id: String = "s1", dataBytes: Int = 16_000): WavSegment =
+        WavSegment(id, startOffsetMs = 0L, endOffsetMs = 1_000L, bytes = ByteArray(44 + dataBytes))
 }

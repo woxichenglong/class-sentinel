@@ -20,7 +20,6 @@ import com.classsentinel.core.detect.Sensitivity
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.core.log.SafeLog
-import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.summary.SummaryTemplate
 import com.classsentinel.core.summary.SummaryTemplateSettings
 import com.classsentinel.core.summary.SummaryTemplates
@@ -62,7 +61,7 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * 设置项清单见 [Constants]。核心成对接口：nameListFlow/saveNameList、
  * sensitivityFlow/saveSensitivityPreset、rollcallSuppressMsFlow/saveRollcallSuppressMs、
  * questionSuppressMsFlow/saveQuestionSuppressMs、vadDbFlow/saveVadDb、
- * asrEngineFlow/saveAsrEngine、localAsrModelIdFlow/saveLocalAsrModel、
+ * asrEngineFlow/saveAsrEngine、
  * answerTriggerModeFlow/saveAnswerTriggerMode、questionAlertModeFlow/saveQuestionAlertMode、
  * channelFlow/setChannelEnabled、
  * aiSettingsFlow/saveAiSettings。
@@ -250,20 +249,6 @@ class SettingsRepository(
         .map { it[Keys.ASR_ENGINE] ?: Constants.ASR_ENGINE_DEFAULT }
         .ioCatch { Constants.ASR_ENGINE_DEFAULT }
 
-    /** Ordinary local streaming model selection; legacy [asrEngineFlow] remains separate. */
-    val localAsrModelIdFlow: Flow<String> = dataStore.data
-        .map { ModelProfiles.resolveDaily(it[Keys.LOCAL_ASR_MODEL_ID]).id }
-        .ioCatch { ModelProfiles.ZIPFORMER_ZH_14M.id }
-
-    /** User preference catalog; it is intentionally separate from runtime eligibility. */
-    val preferredLocalModelIdFlow: Flow<String> = dataStore.data
-        .map { ModelProfiles.resolvePreferred(it[Keys.PREFERRED_LOCAL_MODEL_ID]).id }
-        .ioCatch { ModelProfiles.ZIPFORMER_ZH_14M.id }
-
-    /** Raw preference used by runtime resolver to distinguish missing/unknown from 14M. */
-    val preferredLocalModelIdRawFlow: Flow<String?> = dataStore.data
-        .map { it[Keys.PREFERRED_LOCAL_MODEL_ID] }
-        .ioCatch { null }
 
     /** 单通道开关流（key ∈ vibrate/ringtone/notify/flash/ear） */
     fun channelFlow(key: String): Flow<Boolean> = dataStore.data
@@ -360,12 +345,23 @@ class SettingsRepository(
         .map { it[Keys.ONBOARDING_COMPLETED] ?: false }
         .ioCatch { false }
 
+    /** 姓名页已保存但权限步骤尚未完成；用于重启时恢复到 Permissions。 */
+    val onboardingNameSavedFlow: Flow<Boolean> = dataStore.data
+        .map { it[Keys.ONBOARDING_NAME_SAVED] == ONBOARDING_NAME_SAVED_VALUE }
+        .ioCatch { false }
+
     // ------------------------------------------------------------------
     // 保存接口（写 DataStore + 同步回写 AppConfig）
     // ------------------------------------------------------------------
 
-    suspend fun saveNameList(names: List<NameEntry>) {
-        dataStore.edit { it[Keys.NAMES] = encodeNameList(names) }
+    suspend fun saveNameList(
+        names: List<NameEntry>,
+        markOnboardingNameSaved: Boolean = false,
+    ) {
+        dataStore.edit {
+            it[Keys.NAMES] = encodeNameList(names)
+            if (markOnboardingNameSaved) it[Keys.ONBOARDING_NAME_SAVED] = ONBOARDING_NAME_SAVED_VALUE
+        }
         AppConfig.names.value = names
     }
 
@@ -411,19 +407,6 @@ class SettingsRepository(
         SafeLog.d("settings_saved", mapOf("module" to "SettingsRepository", "engine" to engine))
     }
 
-    suspend fun saveLocalAsrModel(profileId: String) {
-        val profile = ModelProfiles.DAILY_SELECTABLE.firstOrNull { it.id == profileId }
-            ?: throw IllegalArgumentException("UNKNOWN_LOCAL_ASR_MODEL")
-        dataStore.edit { it[Keys.LOCAL_ASR_MODEL_ID] = profile.id }
-        SafeLog.d("settings_saved", mapOf("module" to "SettingsRepository", "localModel" to profile.id))
-    }
-
-    suspend fun savePreferredLocalModel(profileId: String) {
-        val profile = ModelProfiles.EVALUATION_CATALOG.firstOrNull { it.id == profileId }
-            ?: throw IllegalArgumentException("UNKNOWN_PREFERRED_LOCAL_MODEL")
-        dataStore.edit { it[Keys.PREFERRED_LOCAL_MODEL_ID] = profile.id }
-        SafeLog.d("settings_saved", mapOf("module" to "SettingsRepository", "preferredModel" to profile.id))
-    }
 
     suspend fun setChannelEnabled(key: String, enabled: Boolean) {
         if (!Channels.isKnown(key)) return
@@ -530,7 +513,10 @@ class SettingsRepository(
     }
 
     suspend fun saveOnboardingCompleted(completed: Boolean = true) {
-        dataStore.edit { it[Keys.ONBOARDING_COMPLETED] = completed }
+        dataStore.edit {
+            it[Keys.ONBOARDING_COMPLETED] = completed
+            if (completed) it.remove(Keys.ONBOARDING_NAME_SAVED)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -575,10 +561,6 @@ class SettingsRepository(
     private fun setDefaultsIfMissing(p: androidx.datastore.preferences.core.MutablePreferences) {
         if (p[Keys.SEGMENT_MAX_SEC] == null) p[Keys.SEGMENT_MAX_SEC] = Constants.SEGMENT_MAX_SEC_DEFAULT
         if (p[Keys.ASR_ENGINE] == null) p[Keys.ASR_ENGINE] = Constants.ASR_ENGINE_DEFAULT
-        if (p[Keys.LOCAL_ASR_MODEL_ID] == null) p[Keys.LOCAL_ASR_MODEL_ID] = ModelProfiles.ZIPFORMER_ZH_14M.id
-        if (p[Keys.PREFERRED_LOCAL_MODEL_ID] == null) {
-            p[Keys.PREFERRED_LOCAL_MODEL_ID] = ModelProfiles.resolvePreferred(p[Keys.LOCAL_ASR_MODEL_ID]).id
-        }
         if (p[Keys.LOCKSCREEN_NOTIFY] == null) p[Keys.LOCKSCREEN_NOTIFY] = true
         if (p[Keys.VIBRATE_MODE] == null) p[Keys.VIBRATE_MODE] = "normal"
         if (p[Keys.AI_BASE_URL] == null) p[Keys.AI_BASE_URL] = Constants.AI_BASE_URL_DEFAULT
@@ -643,8 +625,6 @@ private object Keys {
     val QUESTION_WORD_LEVEL = intPreferencesKey("question_word_level")
     val SEGMENT_MAX_SEC = intPreferencesKey("segment_max_sec")
     val ASR_ENGINE = stringPreferencesKey("asr_engine")
-    val LOCAL_ASR_MODEL_ID = stringPreferencesKey("local_asr_model_id")
-    val PREFERRED_LOCAL_MODEL_ID = stringPreferencesKey("preferred_local_model_id")
     val CH_VIBRATE = booleanPreferencesKey("ch_vibrate")
     val CH_RINGTONE = booleanPreferencesKey("ch_ringtone")
     val CH_NOTIFY = booleanPreferencesKey("ch_notify")
@@ -668,8 +648,11 @@ private object Keys {
     val AUDIO_RETENTION_POLICY = stringPreferencesKey("audio_retention_policy")
     val DARK_MODE = stringPreferencesKey("dark_mode")
     val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+    val ONBOARDING_NAME_SAVED = stringPreferencesKey("onboarding_name_saved")
     val SECRETS_MIGRATED = booleanPreferencesKey(SECRET_STORE_MIGRATION_PREF)
 }
+
+private const val ONBOARDING_NAME_SAVED_VALUE = "name_saved"
 
 private object Constants {
     const val SEGMENT_MAX_SEC_DEFAULT = 4

@@ -11,7 +11,7 @@ import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
 import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.llm.AnswerTriggerMode
-import com.classsentinel.core.speech.ModelProfiles
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,7 +21,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertThrows
+
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -148,33 +148,6 @@ class SettingsRepositoryTest {
         assertEquals("sk-asr-silicon", AppConfig.siliconApiKey)
     }
 
-    @Test
-    fun `本地模型选择可持久化并在新实例回读`() = runBlocking {
-        val r = repo()
-
-        assertEquals(ModelProfiles.ZIPFORMER_ZH_14M.id, r.localAsrModelIdFlow.first())
-        r.saveLocalAsrModel(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id)
-
-        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
-        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, repo().localAsrModelIdFlow.first())
-
-        assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { r.saveLocalAsrModel(ModelProfiles.X_ASR_960.id) }
-        }
-        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
-        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, repo().localAsrModelIdFlow.first())
-    }
-
-    @Test
-    fun `preferred model persists remote choice without changing runtime model`() = runBlocking {
-        val r = repo()
-        r.saveLocalAsrModel(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id)
-        r.savePreferredLocalModel(ModelProfiles.X_ASR_480.id)
-
-        assertEquals(ModelProfiles.SMALL_BILINGUAL_ZH_EN.id, r.localAsrModelIdFlow.first())
-        assertEquals(ModelProfiles.X_ASR_480.id, r.preferredLocalModelIdFlow.first())
-        assertEquals(ModelProfiles.X_ASR_480.id, repo().preferredLocalModelIdFlow.first())
-    }
 
     @Test
     fun `名字表 JSON 往返保留变体与中文`() = runBlocking {
@@ -321,5 +294,21 @@ class SettingsRepositoryTest {
 
         val reloaded = repo()
         assertEquals(QuestionAlertMode.ALL_QUESTIONS, reloaded.questionAlertModeFlow.first())
+    }
+
+    @Test
+    fun `姓名已保存进度可跨实例恢复并在 onboarding 完成时清除`() = runBlocking {
+        val entry = NameEntry("梁津淦", listOf("阿淦"), listOf("梁津干"))
+        val first = repo()
+
+        assertFalse(first.onboardingNameSavedFlow.first())
+        first.saveNameList(listOf(entry), markOnboardingNameSaved = true)
+
+        val resumed = repo()
+        assertTrue(resumed.onboardingNameSavedFlow.first())
+        assertEquals(listOf(entry), resumed.nameListFlow.first())
+
+        resumed.saveOnboardingCompleted()
+        assertFalse(resumed.onboardingNameSavedFlow.first())
     }
 }

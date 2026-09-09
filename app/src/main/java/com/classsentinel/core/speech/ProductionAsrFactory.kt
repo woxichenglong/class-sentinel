@@ -1,7 +1,6 @@
 package com.classsentinel.core.speech
 
 import android.content.Context
-import com.classsentinel.core.audio.VadSplitter
 import com.classsentinel.core.audio.WavSegment
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.data.SettingsRepositoryHolder
@@ -14,51 +13,31 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /**
- * 生产 ASR 装配：在当前进程或 WorkManager 新进程中按 DataStore 配置构造单段 Router。
+ * 旧分段 ASR 装配：在当前进程或 WorkManager 新进程中按 DataStore 配置构造单段 Router。
  *
  * 这里不保存 process-local engine 实例，也不把凭证放入 WorkManager Data；每次装配都会先
- * 从 SettingsRepository 加载最新设置，再由调用方决定是用于前台监听还是离线 pending 段恢复。
+ * 从 SettingsRepository 加载最新设置，供 WAV 导入和离线 pending 段恢复使用。
  */
 internal object ProductionAsrFactory {
 
-    /** 前台监听使用：VAD 切段后交给同段 Router；失败回调由调用方接入持久化。 */
-    suspend fun createSpeech(
-        context: Context,
-        onSegmentFailed: (suspend (WavSegment, AsrException) -> Unit)? = null,
-        onSegmentTranscribed: (suspend (WavSegment, String) -> Unit)? = null,
-    ): SpeechEngine {
-        val assembly = assemble(context, onSegmentFailed)
-        return LegacySpeechAdapter(
-            engine = RouterSegmentEngine(assembly.router),
-            vad = assembly.vad,
-            onSegmentTranscribed = onSegmentTranscribed,
-        )
-    }
-
-    /** WorkManager pending 段恢复使用：只返回单段 Router，不重复做 VAD。 */
+    /** WorkManager pending 段恢复使用：只返回单段 Router，不负责音频切段。 */
     suspend fun createRouter(
         context: Context,
         onSegmentFailed: (suspend (WavSegment, AsrException) -> Unit)? = null,
-    ): SegmentSpeechRouter = assemble(context, onSegmentFailed).router
+    ): SegmentSpeechRouter = assemble(context, onSegmentFailed)
 
     private suspend fun assemble(
         context: Context,
         onSegmentFailed: (suspend (WavSegment, AsrException) -> Unit)?,
-    ): Assembly {
+    ): SegmentSpeechRouter {
         val appContext = context.applicationContext
         val settings = SettingsRepositoryHolder.get(appContext)
-        val (vad, asrChoice, siliconApiKey, xunfeiAppId, xunfeiApiKey) =
+        val (asrChoice, siliconApiKey, xunfeiAppId, xunfeiApiKey) =
             withContext(Dispatchers.IO) {
                 // Worker 可能在没有启动 Activity 的新进程中执行，不能依赖 AppConfig 已被预热。
                 settings.load()
-                val vadDb = settings.vadDbFlow.first()
-                val segmentMaxSec = settings.segmentMaxSecFlow.first()
                 val choice = settings.asrEngineFlow.first()
                 AsrSettings(
-                    vad = VadSplitter(
-                        silenceDb = vadDb,
-                        maxSegmentMs = segmentMaxSec * 1000,
-                    ),
                     asrChoice = choice,
                     siliconApiKey = AppConfig.siliconApiKey,
                     xunfeiAppId = AppConfig.xunfeiAppId,
@@ -68,25 +47,20 @@ internal object ProductionAsrFactory {
 
         val engines = buildEngines(
             asrChoice = asrChoice,
-            vad = vad,
             siliconApiKey = siliconApiKey,
             xunfeiAppId = xunfeiAppId,
             xunfeiApiKey = xunfeiApiKey,
         )
-        return Assembly(
-            router = SegmentSpeechRouter(
-                primary = engines.first(),
-                fallbacks = engines.drop(1),
-                maxPrimaryRetries = 1,
-                onSegmentFailed = onSegmentFailed,
-            ),
-            vad = vad,
+        return SegmentSpeechRouter(
+            primary = engines.first(),
+            fallbacks = engines.drop(1),
+            maxPrimaryRetries = 1,
+            onSegmentFailed = onSegmentFailed,
         )
     }
 
     private fun buildEngines(
         asrChoice: String,
-        vad: VadSplitter,
         siliconApiKey: String,
         xunfeiAppId: String,
         xunfeiApiKey: String,
@@ -98,8 +72,8 @@ internal object ProductionAsrFactory {
             )
         } else {
             listOf(
-                TeleSpeechEngine(siliconApiKey, vad),
-                SenseVoiceEngine(siliconApiKey, vad),
+                TeleSpeechEngine(siliconApiKey),
+                SenseVoiceEngine(siliconApiKey),
             )
         }
 
@@ -114,27 +88,12 @@ internal object ProductionAsrFactory {
     }
 
     private data class AsrSettings(
-        val vad: VadSplitter,
         val asrChoice: String,
         val siliconApiKey: String,
         val xunfeiAppId: String,
         val xunfeiApiKey: String,
     )
 
-    private data class Assembly(
-        val router: SegmentSpeechRouter,
-        val vad: VadSplitter,
-    )
-}
-
-/** 将 SegmentSpeechRouter 的带 engine 元数据结果适配到旧的 Flow<String> 管线。 */
-private class RouterSegmentEngine(
-    private val router: SegmentSpeechRouter,
-) : SegmentSpeechEngine {
-    override val name: String = "segment-router"
-
-    override suspend fun transcribeSegment(segment: WavSegment): Result<String> =
-        router.transcribeSegment(segment).map { it.text }
 }
 
 /** ASR key 缺失时不触网，返回安全 CONFIG 失败，由上层按既有策略呈现/持久化。 */

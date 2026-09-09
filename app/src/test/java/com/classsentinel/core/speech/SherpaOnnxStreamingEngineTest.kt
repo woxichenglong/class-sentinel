@@ -119,9 +119,9 @@ class SherpaOnnxStreamingEngineTest {
     @Test
     fun `engine identity and sample rate come from model profile`() = runTest {
         val stream = FakeStream()
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
+        val profile = ModelProfiles.PRODUCTION.copy(
             id = "test-8k-profile",
-            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 8_000),
+            recognizer = ModelProfiles.PRODUCTION.recognizer.copy(sampleRate = 8_000),
         )
         val engine = SherpaOnnxStreamingEngine(
             profile = profile,

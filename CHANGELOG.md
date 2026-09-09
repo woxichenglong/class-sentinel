@@ -10,16 +10,16 @@
 - 实时 ASR 使用本地 sherpa-onnx 连续流式实现；`Partial` 只更新展示，`Final` 才进入事件检测、历史和 LLM。
 - `StreamingAsrEvent.Failed` 改为只接受封闭的 `StreamingAsrErrorKind`，避免任意异常文本跨越 live 边界。
 - `StreamingListenPipeline` 收到失败事件后进入终态 `Error`，迟到 ASR 事件不能把状态覆盖回 `Listening`。
-- 旧 `SpeechEngine`、`VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和 fallback 暂留在 WAV 导入/pending recovery 边界，不作为实时链路 fallback；删除前必须先证明无生产引用。
+- 旧分段 `SegmentSpeechEngine`、HTTP ASR 和讯飞适配器仅保留在 WAV 导入/pending recovery 边界，不作为实时课堂链路 fallback；无调用的 VAD/长流 fallback 已删除。
 - 新增 `docs/asr-refactor-checklist.md`，记录保留、隔离、删除候选、接口守护规则和下一切片准入条件。
-- 日常本地 ASR 新增 profile 选择：设置页当前只开放 14M baseline 与 small bilingual；X-ASR 480/960 留在 evaluation/debug catalog，待 live endpoint-on smoke 后再进入日常选择。选择写入独立的 `local_asr_model_id`，每次新监听按同一 profile 安装/复用模型，默认仍为 14M，切换不热切换当前会话。
+- 生产实时 ASR 收敛为唯一的 APK 内置 X-ASR 480 profile；设置页只展示内置离线状态，不提供模型选择、下载、Remote 状态或 ASR fallback。
 - 修复点名提醒时机：新增只针对 ROLLCALL 的 Partial exact-name fast path；同一 utterance 只提前提醒一次，Final 仍权威落库，已提前提醒的最终 ROLLCALL 不重复 alert，QUESTION/LLM 仍保持 Final-only。
 - 收紧点名时序：Partial 只保留 provisional 状态，confirmed suppression 只由 Final/legacy authoritative path 推进；X-ASR live 使用 endpoint-on，官方 deployment/smoke 保留 endpoint-off 独立模式。
 - 修复事件状态机边界：CLASS_OPEN 与 DIRECT 使用独立 question suppression；开放式“为什么/解释”优先于尾部“吗”，Question level 与 STRICT/STANDARD/LOOSE 语义一致；FinalWindow 不再用历史姓名提升当前句 scope。
 - 隔离实时副作用：姓名变体 gate 失败后继续检查完整姓名；AlertCoordinator 按通道隔离普通异常；transcript/event Room 写入失败不阻断当前提醒，QUESTION 在没有 eventId 时仍进入显式 transient/in-memory answer seam，不伪造 Room ID。
 - 收敛即时回答状态：`streamOutput=true` 发布累积 `Streaming`，只在终态成功时写 Room；信息不足使用严格 sentinel，LLM 错误沿安全类别传递，Room 历史写失败会记录固定安全码并在当前课程显示降级提示。
 - 模型启动增加 readiness gate：完整 hash 在 IO dispatcher 执行并带 stat-signature cache；未 ready 时先准备模型，准备失败不发 live START；controller handle 的 false start 结果会进入 service failure callback。
-- 收口所有 START 入口：Quick Settings Tile 改用与 Home 相同的 `LocalListenStartPreflight`，只读取 selected local profile 和模型 readiness，不再以 SiliconFlow/讯飞 key 判定本地 live 是否可用。
+- 收口所有 START 入口：Quick Settings Tile 与 Home 共用 `LocalListenStartPreflight`，只准备固定的 X-ASR 480 和模型 readiness，不再以 SiliconFlow/讯飞 key 判定本地 live 是否可用。
 - 收紧问题抑制：每个 question scope 记录归一化 fingerprint 和时间；窗口内只抑制相同 normalized fingerprint，不同问题立即进入事件/提醒路径，避免整句 Levenshtein 误杀关键术语不同的问题。
 - 补齐姓名定向问题：标准模式下当前 Final 的 exact configured name 可作为 answerable question 的 DIRECT targeting evidence，不放宽普通裸姓名 ROLLCALL gate。
 - 收紧 DIRECT 姓名证据：新增独立 `QuestionTargetMatcher`，只接受 display/明确 aliases，不接受 ASR-only 同音字或拼音；要求姓名边界及呼语/定向续接词，避免嵌入长姓名和普通姓名提及误升级。
@@ -32,15 +32,14 @@
 - Detector/name focused regression：结果以对应 Gradle/XML 报告即时汇总，失败 0、错误 0、跳过 0。
 - JVM 全量：结果以 `app/build/test-results/testDebugUnitTest/TEST-*.xml` 即时汇总，失败 0、错误 0、跳过 0。
 - live factory 静态检查确认不引用 VAD、旧 adapter、HTTP ASR、segment router 或 fallback。
-- 新增 `ModelProfile`、profile 驱动的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。默认 live 仍为 14M baseline；日常选择只开放 14M/small，X-ASR 留在 evaluation/debug catalog；X-ASR live endpoint-on 与官方 endpoint-off 由独立 config mode 区分。
+- 新增 `ModelProfile`、固定 X-ASR 480 的 hash/version installer、参数化 recognizer factory、独立 PCM/WAV replay runner、Runner 层 FAST/REALTIME 绝对音频时间轴与分层 timing、`PreparedModel` 绑定、统一 scorer 和 41 列 CSV 输出；CSV 固定记录 `scorer_version=1` 与 `normalization_profile=mixed-zh-en-v1`。生产 runtime 只使用 Bundled X-ASR 480；live endpoint-on 与官方 endpoint-off 仍由独立 config mode 区分。
 - Debug APK 的大小和 SHA-256 只针对每次实际生成的文件用 `stat` / `sha256sum` 读取，不固定写入 changelog。
 
-### 模型实验门
+### 模型与安装边界
 
-- 加入官方 small bilingual Zipformer 的四文件 INT8/decoder-fp32 artifact、`SMALL_BILINGUAL_ZH_EN` profile 和 debug-only 外部模型 importer；默认 live 仍使用 14M baseline，small 可在设置页选择。
-- 加入 X-ASR-zh-en immutable Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 `X_ASR_480`/`X_ASR_960` profile；官方 deployment CPU smoke 仍使用 endpoint-off，live profile 改为 endpoint-on，但 live endpoint-on native smoke 未完成，因此暂不进入日常模型选择列表；X-ASR 大文件未进入 APK。
-- A/B/C/D 初始 FAST 只使用同一官方 `test_wavs/0.wav`（1 个公开样本），通过 Kotlin `UnifiedAsrScorer` 生成 41 列 CSV；该结果是流程/初筛证据，不替代金融课堂 corpus，也不构成 K80 winner 决定。
-- 本次新 APK 尚未在 K80 重装；旧 APK 的 K80 安装/cold-start 记录不适用于本次模型资产变更。
+- X-ASR 480 使用 immutable Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的四个已核验文件，随 APK 打包并安装到 app-private 目录；size/SHA-256、原子晋升和 marker 仍是 Ready 的必要条件。
+- 首次安装前检查待安装 bytes 加 256 MiB 安全余量；空间不足时不打开 asset、不复制大文件、不留下 Ready marker。
+- A/B/C/D 的历史评测工具仍只输出 41 列脱敏 CSV；本次不做模型更新、远程分发、其他模型 benchmark 或设备 soak。
 
 ## [Unreleased] — v0.3.0 可靠性、学习产物与音频工作流（2026-09-03）
 

@@ -39,9 +39,5 @@ class SettingConsumerMatrixTest {
         assertTrue("ai.model" in SettingConsumerMatrix.visibleKeys)
         assertTrue("channel.notify" in SettingConsumerMatrix.visibleKeys)
         assertTrue("questionAlertMode" in SettingConsumerMatrix.visibleKeys)
-        assertEquals(
-            "SettingsRepository.preferredLocalModelIdFlow → model cards; runtime eligibility remains separate",
-            SettingConsumerMatrix.consumers["localAsrModel"],
-        )
     }
 }

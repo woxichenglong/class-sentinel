@@ -131,6 +131,19 @@ class LlmClientTest {
     }
 
     @Test
+    fun `structured output config sends JSON object response format`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("data: [DONE]\n\n"))
+
+        LlmClient().streamChat(
+            listOf(mapOf("role" to "user", "content" to "name")),
+            cfg().copy(responseFormatJsonObject = true),
+        ).toList()
+
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("json_object", body.getJSONObject("response_format").getString("type"))
+    }
+
+    @Test
     fun `answer service sends system and user messages`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("data: [DONE]\n\n"))
         AnswerService().answer(

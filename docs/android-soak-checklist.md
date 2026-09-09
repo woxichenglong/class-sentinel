@@ -1,6 +1,6 @@
 # ClassSentinel Android 真机 soak checklist
 
-> 目的：验证当前已经落地的实时监听、Room 历史、提醒、即时回答和模型切换在目标 Android/MIUI 设备上的长时间稳定性。
+> 目的：验证当前已经落地的实时监听、Room 历史、提醒和即时回答在目标 Android/MIUI 设备上的长时间稳定性。
 >
 > 这是一份执行清单，不是自动化脚本。当前代码证据来自 `AudioRecord → AudioStreamer → SherpaOnnxStreamingEngine → StreamingListenPipeline → SessionPipelineAdapter → EventEngine / Room / Alert / AnswerService`；JVM、MockWebServer、debug APK 和 CI 不能替代真实设备行为。
 
@@ -36,7 +36,7 @@
 | versionName/versionCode |  |
 | 测试 APK 路径 |  |
 | 测试 APK SHA-256 |  |
-| local ASR profile | `sherpa-zh-14m` / `sherpa-small-bilingual-zh-en` |
+| local ASR profile | `x-asr-480`（唯一 Bundled production profile） |
 | 开始时间 |  |
 | 结束时间 |  |
 | 测试人/环境说明 |  |
@@ -45,7 +45,7 @@
 
 - [ ] 使用目标设备实际安装的 APK，不把旧 APK 的结果混到本轮。
 - [ ] 记录 APK 大小和 SHA-256；不要把 hash 当作未来构建的永久固定值。
-- [ ] 本地模型已准备，记录 profile ID；模型切换要在下一 session 验证。
+- [ ] 唯一的 `x-asr-480` 模型已准备，记录 profile ID；本轮不执行模型切换。
 - [ ] 麦克风、通知、前台服务相关系统条件已记录。
 - [ ] 测试期间有可控的课堂/合成音频来源，且报告不保存音频内容。
 
@@ -93,7 +93,7 @@ adb -s <SERIAL> shell logcat -d -s ClassSentinel:I '*:S'
 | 阶段 | 手动动作 | 观察与记录 | 通过条件 | 结果 |
 |---|---|---|---|---|
 | 0–15 分钟 | App 前台、屏幕亮，开始监听 | `Starting → Listening`、Final 计数、PSS/RSS/native heap | 没有重复课程/重复 collector；有真实 Final 或明确记录音频源未产生 Final | `NOT RUN` |
-| 15–30 分钟 | 保持 App 前台，锁定模型 profile | 转写数量、提醒次数、CPU/温度/电量 | 监听持续；Partial 不进入历史；Final/提醒无明显重复 | `NOT RUN` |
+| 15–30 分钟 | 保持 App 前台，使用固定 X-ASR 480 | 转写数量、提醒次数、CPU/温度/电量 | 监听持续；Partial 不进入历史；Final/提醒无明显重复 | `NOT RUN` |
 | 30–45 分钟 | 屏幕亮/灭切换一次 | FGS 通知、pipeline 状态、PSS/native heap | 屏幕灭后监听不无故消失；恢复亮屏后 UI 状态与服务一致 | `NOT RUN` |
 | 45–60 分钟 | App 前台/后台切换，保持监听 | 后台状态、通知、CPU/温度/电量 | 后台没有静默停止或资源泄漏；若 ROM 限制导致停止，记录安全状态/时间点 | `NOT RUN` |
 | 60–75 分钟 | 再次检查锁屏和通知 | 锁屏可见内容、服务状态 | 锁屏不显示不必要课堂正文；通知权限状态与 UI 记录一致 | `NOT RUN` |

@@ -20,7 +20,7 @@ internal enum class SherpaEndpointMode {
 internal object SherpaOnnxRecognizerFactory {
     fun buildConfig(
         modelDirectory: File,
-        profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+        profile: ModelProfile = ModelProfiles.PRODUCTION,
         endpointMode: SherpaEndpointMode = SherpaEndpointMode.LIVE,
     ): OnlineRecognizerConfig {
         val artifact = profile.artifact
@@ -59,7 +59,7 @@ internal object SherpaOnnxRecognizerFactory {
 
     fun create(
         modelDirectory: File,
-        profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+        profile: ModelProfile = ModelProfiles.PRODUCTION,
         endpointMode: SherpaEndpointMode = SherpaEndpointMode.LIVE,
     ): SherpaOnlineRecognizerPort {
         require(modelDirectory.isDirectory) { "ASR_MODEL_NOT_READY" }

@@ -1,12 +1,9 @@
 package com.classsentinel.core.speech
 
-import com.classsentinel.core.audio.VadSplitter
 import com.classsentinel.core.audio.WavSegment
 import com.classsentinel.core.log.SafeLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -22,21 +19,16 @@ import java.util.concurrent.TimeUnit
  *
  * 新主路径是 [SegmentSpeechEngine.transcribeSegment]：一次只转写一个 [WavSegment]
  * （该段自己的 44 字节 WAV 头 + PCM16），引擎内不做 VAD、不 catch 后跳过失败段；
- * 失败抛携带 [AsrError] 的 [AsrException]。一个基类喂多个免费模型
+ * 失败抛携带 [AsrError] 的 [AsrException]。一个基类喂多个恢复模型
  * （XingChenASR-V3.2-Ultra / SenseVoiceSmall），仅 model 参数不同。
- *
- * 旧 `Flow<ShortArray> -> Flow<String>` 路径（[SpeechEngine.transcribe]）由
- * [LegacySpeechAdapter] 提供：复用 [VadSplitter.segments] + 本单段接口，不复制 VAD、
- * 不静默吞错（失败抛 [AsrException]，旧 FallbackSpeechEngine 以异常切换引擎）。
  */
 open class OpenAiCompatAsrEngine(
     override val name: String,
     private val baseUrl: String,
     private val apiKey: String,
     private val model: String,
-    private val vad: VadSplitter = VadSplitter(),
     private val client: OkHttpClient = defaultClient(),
-) : SegmentSpeechEngine, SpeechEngine {
+) : SegmentSpeechEngine {
 
     companion object {
         /** 有限重试策略：HTTP 5xx/429 最多重试一次；401/403 不重试。 */
@@ -48,9 +40,6 @@ open class OpenAiCompatAsrEngine(
             .build()
     }
 
-    /** 旧接口：交给 legacy adapter（VAD 分段 + 单段转写 + typed failure 上抛）。 */
-    override fun transcribe(pcm: Flow<ShortArray>): Flow<String> =
-        LegacySpeechAdapter(this, vad).transcribe(pcm)
 
     /** 新主路径：单段 multipart 转写。失败返回 [Result.failure]（[AsrException] 携带 [AsrError]）。 */
     override suspend fun transcribeSegment(segment: WavSegment): Result<String> {

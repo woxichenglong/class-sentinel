@@ -18,19 +18,12 @@ import com.classsentinel.core.detect.NameTargetConfidence
 import com.classsentinel.core.detect.PersonalizedNameResolver
 import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.pipeline.StreamingListenPipeline
-import com.classsentinel.core.speech.ModelDistribution
-import com.classsentinel.core.speech.ModelIntegrityVerifier
-import com.classsentinel.core.speech.ModelReadinessChecker
+import com.classsentinel.core.speech.ModelProfiles
+import com.classsentinel.core.speech.ProductionAsrEngineStarter
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.core.speech.SherpaOnnxRecognizerFactory
 import com.classsentinel.core.speech.SherpaOnnxStreamingEngine
-import com.classsentinel.core.speech.ModelProfile
-import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.speech.ProfileBoundStreamingSpeechEngine
-import com.classsentinel.core.speech.RuntimeAsrEngineCreation
-import com.classsentinel.core.speech.RuntimeAsrEngineStarter
-import com.classsentinel.core.speech.RuntimeAsrModelResolver
-import com.classsentinel.core.speech.RuntimeAsrModelSelection
 import com.classsentinel.core.speech.StreamingAsrEvent
 import com.classsentinel.data.AppDatabase
 import com.classsentinel.data.CourseRepository
@@ -75,12 +68,7 @@ internal class ListenServiceHandleFactory(
         } catch (e: Exception) {
             throw IllegalStateException("配置加载失败")
         }
-        val resolver = RuntimeAsrModelResolver(
-            filesDir = context.applicationContext.filesDir,
-            readinessChecker = ModelReadinessChecker(context.applicationContext.filesDir),
-        )
-        val modelSelection = resolver.resolve(settings.preferredLocalModelIdRawFlow.first())
-        val runtimeEngine = createRuntimeAsrEngine(context, modelSelection)
+        val runtimeEngine = createRuntimeAsrEngine(context)
         val db = AppDatabase.get(context)
         // 新会话开始前先收敛旧 RUNNING 课程；pending 音频不依赖前台进程存活。
         val repository = CourseRepository(db)
@@ -88,7 +76,7 @@ internal class ListenServiceHandleFactory(
             repository.abortStale(System.currentTimeMillis() - STALE_RUNNING_COURSE_TIMEOUT_MS)
         }
         val store = CourseSessionStoreAdapter(repository)
-        val speech = runtimeEngine.engine
+        val speech = runtimeEngine
         val pipeline = StreamingListenPipeline(
             streamer = AudioStreamer(context = context),
             speech = speech,
@@ -138,43 +126,28 @@ internal class ListenServiceHandleFactory(
 
 private suspend fun createRuntimeAsrEngine(
     context: Context,
-    selection: RuntimeAsrModelSelection,
-): RuntimeAsrEngineCreation = RuntimeAsrEngineStarter(
-    prepareDirectory = { profile -> prepareRuntimeModelDirectory(context, profile) },
-    initializeModel = { directory, profile ->
+): ProfileBoundStreamingSpeechEngine = ProductionAsrEngineStarter(
+    prepareDirectory = {
         withContext(Dispatchers.IO) {
-            val recognizer = SherpaOnnxRecognizerFactory.create(directory, profile)
+            SherpaModelInstaller(
+                filesDir = context.applicationContext.filesDir,
+                profile = ModelProfiles.PRODUCTION,
+                assetOpener = context.applicationContext.assets::open,
+            ).install()
+        }
+    },
+    initializeModel = { directory ->
+        withContext(Dispatchers.IO) {
+            val recognizer = SherpaOnnxRecognizerFactory.create(directory, ModelProfiles.PRODUCTION)
             try {
-                // Preflight native construction so a bad Remote model falls back before START.
+                // Preflight native construction before the live stream starts.
             } finally {
                 recognizer.release()
             }
         }
     },
     createEngine = ::createLiveStreamingSpeechEngine,
-).create(selection)
-
-private suspend fun prepareRuntimeModelDirectory(
-    context: Context,
-    profile: ModelProfile,
-): File = withContext(Dispatchers.IO) {
-    when (profile.distribution) {
-        ModelDistribution.Bundled -> SherpaModelInstaller(
-            filesDir = context.applicationContext.filesDir,
-            profile = profile,
-            assetOpener = context.applicationContext.assets::open,
-        ).install()
-
-        is ModelDistribution.Remote -> {
-            val directory = ModelIntegrityVerifier.resolveTargetDirectory(
-                context.applicationContext.filesDir,
-                profile,
-            )
-            check(ModelIntegrityVerifier.verify(profile, directory)) { "ASR_MODEL_NOT_READY" }
-            directory
-        }
-    }
-}
+).create()
 
 /**
  * 生产 ControllerHandle 装配边界：供 factory wiring 测试验证 STOP → finalize → hook。
@@ -205,11 +178,12 @@ internal fun createControllerHandle(
 /** Live production seam: local sherpa streaming only; no VAD/HTTP fallback. */
 internal fun createLiveStreamingSpeechEngine(
     modelDirectory: File,
-    profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
 ): ProfileBoundStreamingSpeechEngine =
     SherpaOnnxStreamingEngine(
-        profile = profile,
-        recognizerFactory = { SherpaOnnxRecognizerFactory.create(modelDirectory, profile) },
+        profile = ModelProfiles.PRODUCTION,
+        recognizerFactory = {
+            SherpaOnnxRecognizerFactory.create(modelDirectory, ModelProfiles.PRODUCTION)
+        },
     )
 
 /** 课程会话持久层适配：课程创建与收尾统一经 CourseRepository，不新增任何 Room 字段/迁移。 */

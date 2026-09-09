@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.flow
  */
 internal class SherpaOnnxStreamingEngine(
     private val recognizerFactory: () -> SherpaOnlineRecognizerPort,
-    private val profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
+    private val profile: ModelProfile = ModelProfiles.PRODUCTION,
     private val nowNanos: () -> Long = System::nanoTime,
 ) : ProfileBoundStreamingSpeechEngine, ReplayTimingSource {
     override val modelProfileId: String = profile.id

@@ -1,150 +1,90 @@
-# ASR 架构重构清单
+# ASR 架构收敛清单
 
-> 这份清单以当前源码的实际生产引用为准。它只描述架构边界和迁移状态，不把 JVM 测试通过写成真实设备或真实课堂验收。
+> 这份清单以当前源码和 APK 产物为准：课堂实时 ASR 只有 X-ASR 480，离线、本地、无下载、无选择、无 ASR fallback。旧分段 HTTP ASR 仅服务明确的 WAV 导入与失败音频恢复。
 
-## 当前主链（必须稳定）
+## 当前生产主链
 
 ```text
-AudioStreamer
-  → StreamingSpeechEngine
+ModelProfiles.PRODUCTION (X_ASR_480, Bundled)
+  → SherpaModelInstaller
+  → files/asr/x-asr-zh-en-480ms
+  → ModelIntegrityVerifier / ModelReadinessChecker
+  → SherpaOnnxRecognizerFactory
+  → SherpaOnnxStreamingEngine
   → StreamingListenPipeline
   → SessionPipelineAdapter
-  → EventEngine / DB / Alert / LLM
+  → EventEngine / Room / Alert / LLM
 ```
 
 已确认的 live 接线：
 
-- `app/src/main/java/com/classsentinel/service/ListenServiceHandleFactory.kt:77-119`
-  使用 `SherpaOnnxStreamingEngine`，不经过 `ProductionAsrFactory.createSpeech()`。
-- `app/src/main/java/com/classsentinel/service/ListenServiceHandleFactory.kt:161-307`
-  收集 streaming event；partial 只进 `LiveStreamBus`，final 才进入顺序写入、事件检测、数据库和提醒。
-- `app/src/main/java/com/classsentinel/core/pipeline/StreamingListenPipeline.kt:23-140`
-  负责 PCM/streaming event/生命周期状态，不负责 Room、事件策略或通知细节。
-- `app/src/main/java/com/classsentinel/core/speech/SherpaOnnxStreamingEngine.kt:8-97`
+- `app/src/main/java/com/classsentinel/service/ListenServiceHandleFactory.kt`
+  固定使用 `ModelProfiles.PRODUCTION`，先由 `SherpaModelInstaller` 准备 bundled 目录，再做 recognizer preflight，最后创建唯一的 sherpa streaming engine。
+- `app/src/main/java/com/classsentinel/core/speech/ProductionAsrEngineStarter.kt`
+  只有 prepare → initialize → create 三步；初始化异常直接上抛，`CancellationException` 原样传播，不存在其他模型或 fallback 分支。
+- `app/src/main/java/com/classsentinel/core/pipeline/StreamingListenPipeline.kt`
+  只负责 PCM、streaming event 和生命周期；partial 仅展示，final 才进入事件/历史/LLM。
+- `app/src/main/java/com/classsentinel/core/speech/SherpaOnnxStreamingEngine.kt`
   负责连续 recognizer stream、partial/final、endpoint/reset、取消和 native 资源释放。
 
-## 接口守护规则
-
-- `StreamingAsrEvent.Partial`：可替换的当前句预览；不得入历史、不得触发 LLM。
-- `StreamingAsrEvent.Final`：唯一权威 utterance；同一 `utteranceId` 只允许一次持久化和一次事件检测。
-- `StreamingAsrEvent.Failed`：只能携带 `StreamingAsrErrorKind`，不得携带异常原文、课堂文本、音频、URL 或凭证。
-- `StreamingSpeechEngine`：live ASR 的唯一事件型入口；具体模型、JNI/AAR 和线程调度不得泄漏到 Pipeline 之外。
-- `StreamingListenPipeline`：只拥有采集、事件转发和真实生命周期状态；停止/取消/失败必须终止当前收集并释放上游。
-- `PipelineState`：唯一 live 状态源；UI、通知和 Tile 不维护第二个 listening Boolean。
-- `EventEngine.processFinal`：只接收 final；窗口聚合、姓名/问题策略和抑制属于事件层，不回流到 ASR。
-- DB 写入：由 final-only 适配层顺序提交；写入失败不得伪造成功，重复 final 不得重复插入。
-
-## 实现分层
+## 保留、删除与原因
 
 ### 保留
 
-- `[保留]` `AudioStreamer`
-  - 采集 16 kHz 单声道 PCM。
-  - AudioRecord、零读退避、负值错误和资源释放已有独立契约测试。
-- `[保留/扩展]` `StreamingAsrEvent`
-- `[保留/扩展]` `StreamingSpeechEngine`
-- `[保留/收敛]` `PipelineState`
-- `[保留/收敛]` `EventEngine`、`FinalTranscriptWindow`、`NameMatcher`
-- `[保留]` Room entity/DAO/migration
-  - 内部可继续使用 session/course 关联键；不为界面概念做无必要的大迁移。
+- `AudioStreamer`、`StreamingSpeechEngine`、`StreamingAsrEvent`、`StreamingListenPipeline`、`EventEngine`、Room/DataStore 和 sherpa AAR：仍是课堂实时主链的稳定骨架。
+- `SherpaModelInstaller`、`ModelIntegrityVerifier`、`ModelReadinessChecker`：X480 首次安装、完整性校验、readiness gate 仍真实需要。
+- `WorkManager`：仍被 `PendingTranscriptionWorker`、`SummaryWorker`、`StudyArtifactWorker`、`RetentionCleanupWorker` 和 `PendingRecoveryResumeCoordinator` 使用。
+- `OkHttp`：仍被 LLM 客户端、旧失败音频恢复的 `OpenAiCompatAsrEngine`、讯飞/其他恢复适配器使用。
+- `ProductionAsrFactory`、`VadSplitter`、`SpeechEngine`、`SegmentSpeechEngine`、`SegmentSpeechRouter` 及旧 HTTP/讯飞实现：只保留给 `AudioImportService` 和 pending recovery；实时课堂工厂不引用它们。
 
-### 重构或隔离
+### 删除
 
-- `[重构]` `StreamingListenPipeline`
-  - 当前已隔离 Room/通知；继续补 stop、失败终态、写入背压和 collector 生命周期契约。
-- `[重构]` `ListenServiceHandleFactory` / `SessionPipelineAdapter`
-  - 保持 ASR event、事件策略、持久化、提醒之间的单向边界。
-  - 需要补并发 start、停止时在途 final、写入失败和重复消费测试。
-- `[隔离]` `VadSplitter`
-  - 不进入 live streaming 主链；仅暂留给 WAV 导入和 pending recovery。
-- `[隔离]` `SpeechEngine`
-  - 旧的 `Flow<ShortArray> → Flow<String>` 兼容接口，不得重新成为 live ASR fallback。
-- `[隔离]` `SegmentSpeechEngine` / `SegmentSpeechRouter`
-  - 只服务已切段的导入/恢复路径；不负责连续课堂监听。
-- `[隔离]` `ProductionAsrFactory`
-  - `createSpeech()`/旧 HTTP 装配只允许被 legacy import/recovery 使用。
+以下组件已无真实生产调用，连同专属 wiring、UI 和测试一起删除：
 
-### 删除候选（必须先证明无生产引用）
+- 整套远程模型安装、HTTP Range/断点续传、多源定位和临时 sidecar 逻辑。
+- 后台模型下载 Worker、下载状态/registry、下载 action 和 unique work wiring。
+- debug 外部模型导入入口及其 manifest 注册。
+- runtime 模型 resolver、初始化 fallback 和已删除的模型偏好读写 API。
+- Settings 模型卡片、来源状态、下载/继续/取消/选择动作。
+- 旧的多模型 profile、对应 APK assets、locator/选择器和专属测试。
 
-- `[删除候选]` `OpenAiCompatAsrEngine`
-- `[删除候选]` `TeleSpeechEngine`
-- `[删除候选]` `SenseVoiceEngine`
-- `[删除候选]` `LegacySpeechAdapter`
-- `[删除候选]` `FallbackSpeechEngine`
+## 模型与完整性
 
-删除前必须满足：
+- 唯一 profile：`ModelProfiles.PRODUCTION`，即 `ModelProfiles.X_ASR_480`。
+- distribution：`ModelDistribution.Bundled`。
+- APK asset 目录只允许：`app/src/main/assets/asr/x-asr-zh-en-480ms/`。
+- 安装顺序：APK asset → 同目录临时文件 → expected size → SHA-256 → 原子晋升 → `.model-profile` marker。
+- 首次安装在复制大文件前比较“待安装剩余 bytes + 256 MiB 安全余量”和 `usableSpace`；不足时返回稳定的 `ASR_MODEL_STORAGE_INSUFFICIENT`，不打开 asset，不留下 Ready marker。
+- 已有完整合法文件按 hash/size 复用；损坏或缺失文件重新复制；任何失败都清除 marker。
 
-1. live factory 和 live service 路径无引用；
-2. WAV 导入/pending recovery 是否仍需要已单独确认；
-3. 旧测试迁移或明确标为 legacy contract；
-4. focused + full JVM 回归通过；
-5. 不用删除类来掩盖未解决的接口耦合。
+## Settings 事实
 
-### 已有或待补齐的本地实现
+设置页只展示：
 
-- `[已有]` `SherpaOnnxStreamingEngine`
-- `[已有]` `SherpaOnnxRecognizerFactory`
-- `[已有]` `SherpaModelInstaller`
-- `[已完成一部分]` 模型路径/recognizer port/native 资源释放
-- `[已完成]` PCM graceful stop：`AudioStreamer.stop()` → PCM completion → `inputFinished`/drain → tail `Final`
-- `[待补]` 明确模型生命周期 owner（安装、加载、释放、重建）
-- `[待补]` 用版本 marker + SHA-256/size 校验模型安装；不能只用文件大小判断缓存有效
-- `[待补]` 推理队列和背压上限；不能让 PCM 或 event 无界堆积
-- `[待补]` 长时间暂停、endpoint/reset、模型异常后的可观察恢复策略
-- `[待补]` 重新定义 STRICT/STANDARD/LOOSE 与 `questionWordLevel` 的关系；独立问题词设置不能被姓名 preset 偷改
-- `[待补]` Listening 初始状态和 `elapsedMs` 使用真实运行时信息，不让安静时长期停在 Starting 或显示假时长
-- `[待补]` 姓名 hotword 与中英混讲模型只做目标设备 corpus/性能 POC，不凭静态代码下结论
-- `[待补]` 真实目标设备 POC；JVM fake 不替代准确率、功耗和 MIUI 后台验收
+```text
+语音识别模型
+X-ASR 中英增强模型
+已内置 · 离线可用
+```
 
-## 评测工具状态
+页面没有模型列表、下载、继续、取消、选择、Remote 来源或 preferred model。`asrEngine` 与 ASR credential 仍属于失败音频恢复设置，不是课堂 live 模型选择。
 
-- `[已完成]` `ModelProfile`：14M baseline、small bilingual、X-ASR 480/960 的 artifact、SHA-256/size、recognizer 配置、live/official endpoint 策略、能力声明和 evaluation/daily 目录集中管理。
-- `[已完成]` `SherpaModelInstaller`：按 profile 校验目标文件 hash/size，使用 profile marker；有效缓存不重读 APK assets，同尺寸损坏文件会被替换。
-- `[已完成]` `SherpaOnnxRecognizerFactory`：从 profile 映射 artifact 路径、provider、modelType、modelingUnit、decode、endpoint、hotword/rule 参数；显式区分 live 与 official deployment endpoint mode。
-- `[已完成]` 事件检测状态：Partial provisional rollcall 不推进 confirmed suppression；CLASS_OPEN/DIRECT 使用独立 question clock，并按 scope + normalized fingerprint 只抑制相同问题；开放式 marker 优先于 binary“吗”；当前 Final 只用当前句分类，滚动窗口仅作为 context。
-- `[已完成]` 姓名证据分层：`NameEntry` 区分 display、可直接称呼的 aliases 和仅用于 ASR 容错的 asrVariants；`QuestionTargetMatcher` 只接受 display/aliases，允许中文自然叙述连接 `请/让/叫/有请/邀请`，并按 occurrence 局部判断缺席词，拒绝嵌入长姓名和普通姓名提及；`NameMatcher` 的 contextWords 和缺席词都按当前 occurrence 后的局部结构判断，支持自然填充但不借用其他姓名所在 clause，仍可使用 ASR 变体处理普通 ROLLCALL，且 exact variant gate 失败会继续检查完整姓名。AlertCoordinator 隔离普通通道异常且保留取消传播；Room transcript/event 写入为 best-effort，实时 alert 不依赖写入成功，QUESTION/LLM 仅在 eventId 存在时执行。
-- `[已完成]` `ListenSessionHandle.start(): Boolean` 与 readiness gate：false 启动结果传播到 service failure callback；模型 readiness hash 在 IO dispatcher 执行并带 stat-signature cache，未准备成功前不发 live START。
-- `[已完成]` `LocalListenStartPreflight`：Home 与 Quick Settings Tile 共用 selected local profile、readiness/ensureReady 和本地 asset 路径；云 ASR credential 不再参与 live START 资格。
-- `[已完成]` `PcmReplayRunner`：`PreparedModel` 将 profile、artifactSetHash 与 profile-bound engine 绑定；直接接受 PCM 或 PCM16 mono WAV，使用独立 `ReplayInputConfig.inputPacketMs`（默认 100ms），支持 FAST/REALTIME；REALTIME pacing 在 Runner 层按累计 sample 的绝对音频时间轴执行，并在首包真正准备发送时 lazy 建立 audio clock，WAV source 只负责切包；输出 init/decode/total timing，不经过 legacy importer/VAD。
-- `[已完成]` `UnifiedAsrScorer` + CSV：输出 CER、混合词 WER、脚本级 code-switch error、专业词/姓名 Recall 与 False Discovery Rate、First Partial/Final、`steadyStateRtf` 和可选设备指标；CSV 记录 profile/artifact/run/mode/packet/timing、`scorer_version=1`、`normalization_profile=mixed-zh-en-v1`，不保存参考/识别正文。
-- `[已完成]` AudioRecord stop 边界：显式 stop 后平台负读码视为 graceful EOF，正常运行期间负读码仍保持 typed failure。
-- `[已完成]` small bilingual 官方 artifact、许可证、配置和四文件 size/SHA-256；已加入 `SMALL_BILINGUAL_ZH_EN` profile，可在设置页作为日常模型选择，默认仍为 14M；root artifact 的默认 chunk size 32 不映射为毫秒。
-- `[已完成]` debug-only model importer：只在 debug source set 提供按 profile 导入外部四文件的私有目录 seam；replay 不绑定直接写应用私有目录。
-- `[已完成]` X-ASR 官方 Hub revision `689ff18c584d29910da37b6fe904db0c1489c9d1` 的 480/960 两个 deployment artifact、许可证、配置和四文件 size/SHA-256；已加入 `X_ASR_480`/`X_ASR_960` evaluation profile，live endpoint-on、official deployment endpoint-off，未打入 APK，需先通过 debug importer 准备；live native endpoint-on smoke 仍待完成。
-- `[已完成]` 点名 Partial fast path：`EventEngine.processPartialRollcall()` 仅接受文本 exact 且 `score == 1.0`，同 utterance 去重；Partial 只触发 ROLLCALL alert，不写 DB/不触发 QUESTION/LLM，provisional 不推进 confirmed suppression，Final 继续权威落库并跳过已提前提醒的重复 ROLLCALL alert。
-- `[已完成]` endpoint-off 同 utteranceId 限制和 endpoint-on 两句 reset smoke 已由 JVM seam 回归锁定；真实 X-ASR native endpoint-on 行为仍需 host/目标设备验证，未据此开放日常选择。
-- `[已完成]` 本轮 detector/name focused 与 full JVM 均为 0 failures/errors/skipped；suite/用例数量以对应 Gradle/XML 报告即时汇总，不在 checklist 固定。上述 JVM seam 不替代真实 X-ASR native endpoint、K80 麦克风、功耗和 MIUI 验收。
-- `[部分完成]` 用同一官方 `test_wavs/0.wav` 完成 A/B/C/D 的 1-clip FAST smoke；另有 `proxy-finance-v1` 的 30 scripts/60 WAV，B/C/D FAST 及 C/D quiet/classroom REALTIME 证据。结果只作流程/候选筛选证据，不能替代真实金融课堂 corpus 或 K80 测量。
-- `[待补]` 固定金融课堂 corpus、reference transcript、扩大样本后的 FAST 结果、warm-up/交错顺序记录和 K80 E2E 采集。
+## 接口边界
 
-## Bug 分流
+- `Partial` 是可替换预览，不入 Room、不触发事件或 LLM。
+- 非空 `Final` 是唯一权威输入；同 utterance 只处理一次。
+- `Failed` 只携带封闭安全错误类别，不跨层传递异常原文、URL、凭证、音频或课堂文本。
+- 初始化失败是课堂启动错误，直接交给现有 service failure path；不得改用任何其他 ASR。
+- 课堂实时链不读取已退休的模型偏好字段；旧 DataStore 字段不迁移、不再读取。
 
-### 现在修（会污染新架构）
+## 验收清单
 
-- 状态发布顺序、错误状态被迟到事件覆盖
-- start/stop 竞态、重复 collector、自然结束语义
-- CancellationException 传播和 native/AudioRecord 释放
-- partial 进入历史/LLM 或 final 重复入库
-- EventEngine 多事件去重、互斥和窗口边界
-- service 停止时在途 final 的持久化一致性
-- 推理线程阻塞、队列无界增长和背压缺失
-- 日志/状态/WorkManager Data 泄漏原文、路径或凭证
+- [ ] X480 四个本地源文件先验 size/SHA，再复制进 assets；复制后再次验 hash。
+- [ ] production profile 只有 X480 且为 Bundled。
+- [ ] focused tests 覆盖 profile、Settings 静态契约、固定 runtime、初始化失败/取消、installer 损坏重装和空间不足。
+- [ ] `:app:testDebugUnitTest`、`:app:lintDebug`、`:app:assembleDebug` 全部在最终稳定树执行。
+- [ ] 生成 APK 用 ZIP entry 实际检查：X480 四文件存在，其他旧模型文件不存在；记录 APK 字节大小。
+- [ ] `git diff --check` 通过。
+- [ ] 真机安装、K80/Note11 soak、native mmap 优化、模型更新、commit/push 均不属于本次范围。
 
-### 暂缓（旧实现专属）
-
-- 云 HTTP provider 的重试参数和网络切换
-- 旧 VAD 阈值、旧分段长度调优
-- TeleSpeech/SenseVoice/OpenAI-compatible provider 的兼容细节
-- 旧 fallback 链的恢复体验
-
-## 已落地的架构门禁
-
-- `StreamingListenPipeline` 在收到 `Failed` 后进入终态 `Error`，迟到事件不能恢复为 `Listening`。
-- `StreamingAsrEvent.Failed` 使用封闭的 `StreamingAsrErrorKind`，不再接受任意字符串。
-- `EventEngine.resetSession()` 在复用 Handle 的新 session start 时清理时间戳、final 去重集合、窗口和内部序号。
-- 停止 live pipeline 不再立即取消 ASR；AudioRecord/PCM 先 graceful complete，Sherpa drain 后才释放。
-- 旧云 ASR、VAD、数据库迁移和 UI 本批未做无关修改；旧 `ListenPipeline` 仅增加复用 streamer 的 start 复位。
-
-## 下一切片准入
-
-下一步只处理 `SessionPipelineAdapter` 的一个边界：证明并修复“停止时已经产生的 final 必须按顺序完成或以可观察失败结束”，同时覆盖重复 start/stop 和写入 Job 生命周期。该切片完成前，不删除任何 legacy ASR 类，也不扩展 provider 功能。
+JVM、lint 和 APK 只证明软件与打包事实；真实麦克风质量、MIUI 后台行为、温度/功耗和长时间稳定性仍需单独的设备验收。

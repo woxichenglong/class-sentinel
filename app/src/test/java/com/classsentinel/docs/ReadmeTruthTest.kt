@@ -29,10 +29,12 @@ class ReadmeTruthTest {
         assertTrue(readme.contains("MIGRATION_2_3"))
         assertTrue(readme.contains("MIGRATION_3_4"))
         assertTrue(readme.contains("MIGRATION_4_5"))
-        assertTrue(readme.contains("sherpa-zh-14m"))
-        assertTrue(readme.contains("sherpa-small-bilingual-zh-en"))
+        assertTrue(readme.contains("ModelProfiles.PRODUCTION"))
         assertTrue(readme.contains("x-asr-480"))
-        assertTrue(readme.contains("x-asr-960"))
+        assertTrue(readme.contains("不提供下载或选择"))
+        assertFalse(readme.contains("sherpa-zh-14m"))
+        assertFalse(readme.contains("sherpa-small-bilingual-zh-en"))
+        assertFalse(readme.contains("x-asr-960"))
         assertTrue(readme.contains("Android CI"))
         assertTrue(readme.contains("test-results/testDebugUnitTest"))
         assertTrue(readme.contains("sha256sum"))
@@ -40,6 +42,21 @@ class ReadmeTruthTest {
         assertFalse(readme.contains("90 个测试类、502 个用例"))
         assertFalse(readme.contains("223,657,379"))
         assertFalse(readme.contains("8601c32c8b138af369f2493ecf3edfa8b6fbc039c0b6bd022c26d2cfae1f00d7"))
+    }
+
+    @Test
+    fun `settings exposes only the bundled X ASR model fact`() {
+        val settings = readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/SettingsScreen.kt")
+
+        assertTrue(settings.contains("语音识别模型"))
+        assertTrue(settings.contains("X-ASR 中英增强模型"))
+        assertTrue(settings.contains("已内置 · 离线可用"))
+        assertFalse(settings.contains("ModelDownload"))
+        assertFalse(settings.contains("preferredLocalModel"))
+        assertFalse(settings.contains("使用此模型"))
+        assertFalse(settings.contains("继续下载"))
+        assertFalse(settings.contains("取消下载"))
+        assertFalse(settings.contains("Remote"))
     }
 
     @Test

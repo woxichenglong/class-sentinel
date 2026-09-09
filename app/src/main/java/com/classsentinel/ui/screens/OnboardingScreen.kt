@@ -13,124 +13,100 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.detect.NameEntry
+import com.classsentinel.core.llm.AiConnectivityChecker
+import com.classsentinel.core.llm.LlmNameVariantGenerator
+import com.classsentinel.core.llm.LlmAiConnectivityChecker
+import com.classsentinel.core.llm.NameVariantGenerator
+import com.classsentinel.core.llm.NameVariantSanitizer
+import com.classsentinel.core.speech.NameVoiceCalibrator
+import com.classsentinel.core.speech.X480NameVoiceCalibrator
+import com.classsentinel.data.AiSettings
+import com.classsentinel.data.SettingsRepository
 import com.classsentinel.data.SettingsRepositoryHolder
+import com.classsentinel.ui.AI_NAME_PRIVACY_NOTICE
+import com.classsentinel.ui.AiSetupState
+import com.classsentinel.ui.NameOnboardingResult
+import com.classsentinel.ui.OnboardingStep
+import com.classsentinel.ui.aiSetupFailureMessage
+import com.classsentinel.ui.canSkipAi
+import com.classsentinel.ui.hasValidNameConfiguration
+import com.classsentinel.ui.initialAiSetupState
+import com.classsentinel.ui.initialOnboardingStep
+import com.classsentinel.ui.isAiSettingsComplete
+import com.classsentinel.ui.prepareOnboardingName
+import com.classsentinel.ui.saveAndCheckAi
+import com.classsentinel.ui.AI_NAME_VOICE_PRIVACY_NOTICE
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** 首启引导：①录名字 ②授权麦克风/通知；AI 配置留在设置页。 */
+/** 首启引导：AI 配置 → 姓名/识别配置 → 麦克风/通知授权；AI 不可用也不阻塞继续。 */
 @Composable
-fun OnboardingScreen(onDone: () -> Unit) {
-    var step by remember { mutableIntStateOf(0) }
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("课堂哨兵", style = MaterialTheme.typography.headlineLarge)
-            Text("两步完成基础设置", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(32.dp))
-            when (step) {
-                0 -> StepName(onNext = { step = 1 })
-                1 -> StepPermissions(onDone = onDone, onBack = { step = 0 })
-            }
-        }
+fun OnboardingScreen(
+    onDone: () -> Unit,
+    nameVariantGenerator: NameVariantGenerator? = null,
+    aiConnectivityChecker: AiConnectivityChecker? = null,
+    nameVoiceCalibrator: NameVoiceCalibrator? = null,
+) {
+    val context = LocalContext.current
+    val settings = remember { SettingsRepositoryHolder.get(context) }
+    val scope = rememberCoroutineScope()
+    val generator = remember(settings, nameVariantGenerator) {
+        nameVariantGenerator ?: LlmNameVariantGenerator(
+            settingsProvider = { settings.aiSettingsFlow.first() },
+        )
     }
-}
-
-@Composable
-private fun StepName(onNext: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var display by remember { mutableStateOf("") }
-    var aliases by remember { mutableStateOf("") }
-    var asrVariants by remember { mutableStateOf("") }
-
-    Text("你的名字（老师点名用的）", style = MaterialTheme.typography.titleLarge)
-    Spacer(Modifier.height(16.dp))
-    OutlinedTextField(
-        value = display,
-        onValueChange = { display = it },
-        label = { Text("姓名") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        value = aliases,
-        onValueChange = { aliases = it },
-        label = { Text("可称呼昵称（逗号分隔）") },
-        placeholder = { Text("例：小伟") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        value = asrVariants,
-        onValueChange = { asrVariants = it },
-        label = { Text("ASR 变体（仅识别容错，逗号分隔）") },
-        placeholder = { Text("例：张微, 张威, zhang wei") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Spacer(Modifier.height(24.dp))
-    Button(
-        onClick = {
-            val a = aliases.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
-            val v = asrVariants.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
-            scope.launch {
-                SettingsRepositoryHolder.get(context)
-                    .saveNameList(
-                        listOf(
-                            NameEntry(
-                                display = display.trim(),
-                                aliases = a,
-                                asrVariants = v,
-                            ),
-                        ),
-                    )
-                onNext()
-            }
-        },
-        enabled = display.trim().isNotEmpty(),
-        modifier = Modifier.fillMaxWidth(),
-    ) { Text("下一步") }
-}
-
-@Composable
-private fun StepPermissions(onDone: () -> Unit, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val checker = remember(aiConnectivityChecker) {
+        aiConnectivityChecker ?: LlmAiConnectivityChecker()
+    }
+    val voiceCalibrator = remember(nameVoiceCalibrator, context) {
+        nameVoiceCalibrator ?: X480NameVoiceCalibrator.create(context)
+    }
+    var step by remember { mutableStateOf<OnboardingStep?>(null) }
+    var initialAiSettings by remember { mutableStateOf<AiSettings?>(null) }
+    var aiReady by remember { mutableStateOf(false) }
+    var pendingNameEntry by remember { mutableStateOf<NameEntry?>(null) }
+    var savingCalibratedName by remember { mutableStateOf(false) }
+    var calibrationSaveError by remember { mutableStateOf<String?>(null) }
+    var setupMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var audioGranted by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
-                == PackageManager.PERMISSION_GRANTED,
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED,
         )
     }
     var notifyGranted by remember {
         mutableStateOf(
             Build.VERSION.SDK_INT < 33 ||
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED,
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED,
         )
     }
     val audioLauncher = rememberLauncherForActivityResult(
@@ -139,14 +115,379 @@ private fun StepPermissions(onDone: () -> Unit, onBack: () -> Unit) {
     val notifyLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { notifyGranted = it }
+
+    LaunchedEffect(settings) {
+        val aiSettings = settings.aiSettingsFlow.first()
+        val names = settings.nameListFlow.first()
+        val completed = settings.onboardingCompletedFlow.first()
+        initialAiSettings = aiSettings
+        aiReady = isAiSettingsComplete(aiSettings)
+        step = initialOnboardingStep(
+            aiConfigured = aiReady,
+            hasName = hasValidNameConfiguration(names),
+            onboardingCompleted = completed,
+        )
+        if (completed) onDone()
+    }
+
+    fun saveCalibratedName(variants: List<String>) {
+        val pending = pendingNameEntry ?: return
+        if (savingCalibratedName) return
+        savingCalibratedName = true
+        calibrationSaveError = null
+        scope.launch {
+            try {
+                val finalEntry = pending.copy(
+                    asrVariants = NameVariantSanitizer.sanitize(pending.display, variants),
+                )
+                settings.saveNameList(
+                    listOf(finalEntry),
+                    markOnboardingNameSaved = true,
+                )
+                step = OnboardingStep.Permissions
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                calibrationSaveError = "姓名识别配置保存失败，请重试"
+            } finally {
+                savingCalibratedName = false
+            }
+        }
+    }
+
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("让课堂哨兵认识你", style = MaterialTheme.typography.headlineLarge)
+            Text("先配置 AI，再完成姓名识别和课堂监听", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(32.dp))
+            when (step) {
+                null -> {
+                    CircularProgressIndicator()
+                    Text("正在读取已保存配置…", style = MaterialTheme.typography.bodySmall)
+                }
+                OnboardingStep.AiConfig -> {
+                    StepAiConfig(
+                        initialSettings = checkNotNull(initialAiSettings),
+                        settings = settings,
+                        checker = checker,
+                        onReady = {
+                            aiReady = true
+                            step = OnboardingStep.NameConfig
+                        },
+                        onSkip = {
+                            aiReady = false
+                            step = OnboardingStep.NameConfig
+                        },
+                    )
+                }
+                OnboardingStep.NameConfig -> {
+                    StepName(
+                        settings = settings,
+                        generator = generator,
+                        aiReady = aiReady,
+                        onNext = { result, message ->
+                            setupMessage = message
+                            when (result) {
+                                is NameOnboardingResult.Saved -> {
+                                    pendingNameEntry = result.entry
+                                    calibrationSaveError = null
+                                    step = OnboardingStep.VoiceNameCalibration
+                                }
+                                is NameOnboardingResult.ExistingConfiguration -> {
+                                    pendingNameEntry = result.entry
+                                    step = OnboardingStep.Permissions
+                                }
+                            }
+                        },
+                    )
+                }
+                OnboardingStep.VoiceNameCalibration -> {
+                    val pending = pendingNameEntry
+                    if (pending == null) {
+                        Text("正在恢复姓名配置…", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        VoiceNameCalibrationScreen(
+                            expectedDisplayName = pending.display,
+                            aiSeedVariants = pending.asrVariants,
+                            calibrator = voiceCalibrator,
+                            microphoneGranted = audioGranted,
+                            onRequestMicrophone = {
+                                audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                            onFinished = ::saveCalibratedName,
+                            saving = savingCalibratedName,
+                            saveError = calibrationSaveError,
+                        )
+                    }
+                }
+                OnboardingStep.Permissions -> {
+                    StepPermissions(
+                        setupMessage = setupMessage,
+                        audioGranted = audioGranted,
+                        notifyGranted = notifyGranted,
+                        onRequestAudio = {
+                            audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        onRequestNotify = {
+                            notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        },
+                        onDone = onDone,
+                        onBack = { step = OnboardingStep.NameConfig },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepAiConfig(
+    initialSettings: AiSettings,
+    settings: SettingsRepository,
+    checker: AiConnectivityChecker,
+    onReady: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var baseUrl by remember(initialSettings) { mutableStateOf(initialSettings.baseUrl) }
+    var apiKey by remember(initialSettings) { mutableStateOf(initialSettings.apiKey) }
+    var model by remember(initialSettings) { mutableStateOf(initialSettings.model) }
+    var state by remember(initialSettings) { mutableStateOf(initialAiSetupState(initialSettings)) }
+
+    fun markEditing() {
+        if (state !is AiSetupState.Checking) state = AiSetupState.Editing
+    }
+
+    Text("配置 AI 服务（可选）", style = MaterialTheme.typography.titleLarge)
+    Text(
+        "用于自动生成姓名识别容错。没有配置也可以继续使用课堂监听。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(12.dp))
+    OutlinedTextField(
+        value = baseUrl,
+        onValueChange = { baseUrl = it; markEditing() },
+        label = { Text("Base URL") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = apiKey,
+        onValueChange = { apiKey = it; markEditing() },
+        label = { Text("API Key") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = model,
+        onValueChange = { model = it; markEditing() },
+        label = { Text("Model") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    Text("AI 服务预设", style = MaterialTheme.typography.labelLarge)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        OutlinedButton(
+            onClick = {
+                baseUrl = com.classsentinel.core.llm.AiProviderPreset.DEEPSEEK_OFFICIAL.baseUrl
+                model = com.classsentinel.core.llm.AiProviderPreset.DEEPSEEK_OFFICIAL.model
+                markEditing()
+            },
+            modifier = Modifier.weight(1f),
+        ) { Text("DeepSeek") }
+        OutlinedButton(
+            onClick = {
+                baseUrl = com.classsentinel.core.llm.AiProviderPreset.SILICON_FLOW.baseUrl
+                model = com.classsentinel.core.llm.AiProviderPreset.SILICON_FLOW.model
+                markEditing()
+            },
+            modifier = Modifier.weight(1f),
+        ) { Text("硅基") }
+        OutlinedButton(
+            onClick = {
+                baseUrl = com.classsentinel.core.llm.AiProviderPreset.COMMAND_CODE.baseUrl
+                model = com.classsentinel.core.llm.AiProviderPreset.COMMAND_CODE.model
+                markEditing()
+            },
+            modifier = Modifier.weight(1f),
+        ) { Text("Command") }
+    }
+    Spacer(Modifier.height(12.dp))
+    when (val current = state) {
+        AiSetupState.Unconfigured -> Text("尚未配置 AI，可暂时跳过")
+        AiSetupState.Editing -> Text("保存后会检查当前 AI 服务")
+        AiSetupState.Checking -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator()
+                Spacer(Modifier.width(8.dp))
+                Text("正在检查 AI 连接…")
+            }
+        }
+        AiSetupState.Ready -> Text("AI 已准备好，将在姓名页启用自动生成")
+        is AiSetupState.Failed -> Text(
+            aiSetupFailureMessage(current.reason),
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    Spacer(Modifier.height(12.dp))
+    Button(
+        onClick = {
+            state = AiSetupState.Checking
+            scope.launch {
+                val result = saveAndCheckAi(
+                    draft = AiSettings(baseUrl = baseUrl, apiKey = apiKey, model = model),
+                    save = settings::saveAiSettings,
+                    checker = checker,
+                )
+                state = result
+                if (result is AiSetupState.Ready) onReady()
+            }
+        },
+        enabled = state !is AiSetupState.Checking,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("保存并检查 AI") }
+    TextButton(
+        onClick = onSkip,
+        enabled = canSkipAi(state),
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("暂时跳过") }
+}
+
+@Composable
+private fun StepName(
+    settings: SettingsRepository,
+    generator: NameVariantGenerator,
+    aiReady: Boolean,
+    onNext: (NameOnboardingResult, String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var display by remember { mutableStateOf("") }
+    var aliases by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    Text("你的姓名", style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(16.dp))
+    OutlinedTextField(
+        value = display,
+        onValueChange = { display = it },
+        label = { Text("姓名（必填）") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    Text("别人平时也会这样叫你（可选）", style = MaterialTheme.typography.bodyMedium)
+    OutlinedTextField(
+        value = aliases,
+        onValueChange = { aliases = it },
+        label = { Text("昵称/别名（可选，多个用逗号分隔）") },
+        placeholder = { Text("例：阿淦，淦哥") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "AI 只生成可能的 ASR 误识别文本，不会替你猜昵称或别名。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (!aiReady) {
+        Spacer(Modifier.height(8.dp))
+        Text("AI 识别配置暂不可用", color = MaterialTheme.colorScheme.error)
+        Text("你仍可以完成设置，之后可在设置中补充。")
+    }
+    Spacer(Modifier.height(24.dp))
+    Text(AI_NAME_PRIVACY_NOTICE, style = MaterialTheme.typography.bodySmall)
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = {
+            scope.launch {
+                saving = true
+                errorMessage = null
+                try {
+                    val result = prepareOnboardingName(
+                        displayName = display,
+                        aliasesInput = aliases,
+                        existingNames = settings.nameListFlow.first(),
+                        generator = generator,
+                        aiReady = aiReady,
+                    )
+                    when (result) {
+                        is NameOnboardingResult.Saved -> {
+                            onNext(
+                                result,
+                                if (result.aiGenerated) {
+                                    "识别配置完成\n已自动生成 ${result.generatedVariantCount} 个姓名识别容错规则"
+                                } else {
+                                    "姓名已保存；AI 识别配置暂时未完成，可稍后在设置中补充识别变体"
+                                },
+                            )
+                        }
+                        is NameOnboardingResult.ExistingConfiguration -> {
+                            onNext(result, "已保留现有姓名配置")
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    errorMessage = "姓名保存失败，请重试"
+                } finally {
+                    saving = false
+                }
+            }
+        },
+        enabled = display.trim().isNotEmpty() && !saving,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text(if (aiReady) "AI 帮我完成识别配置" else "继续保存姓名") }
+    if (saving) {
+        Spacer(Modifier.height(12.dp))
+        CircularProgressIndicator()
+        Text(if (aiReady) "正在生成识别配置…" else "正在保存姓名…", style = MaterialTheme.typography.bodySmall)
+    }
+    errorMessage?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun StepPermissions(
+    setupMessage: String?,
+    audioGranted: Boolean,
+    notifyGranted: Boolean,
+    onRequestAudio: () -> Unit,
+    onRequestNotify: () -> Unit,
+    onDone: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Text("权限（课堂监听必需）", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
+    setupMessage?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(12.dp))
+    }
     PermissionRow("麦克风（听老师讲话）", audioGranted) {
-        audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        onRequestAudio()
     }
     if (Build.VERSION.SDK_INT >= 33) {
         PermissionRow("通知（点名提醒）", notifyGranted) {
-            notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            onRequestNotify()
         }
     }
     Text(

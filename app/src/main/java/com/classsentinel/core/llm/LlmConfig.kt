@@ -9,4 +9,6 @@ data class LlmConfig(
     val thinkingDisabled: Boolean = true,
     /** 可选的输出 token 上限；不设置时沿用 provider 默认值。 */
     val maxTokens: Int? = null,
+    /** 请求 provider 以 JSON object 作为结构化输出；普通回答保持 null/false。 */
+    val responseFormatJsonObject: Boolean = false,
 )

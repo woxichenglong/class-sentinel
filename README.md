@@ -1,7 +1,7 @@
 # 课堂哨兵 ClassSentinel
 
 > 大学课堂 AI 助手：后台听讲转写，老师点名/提问时提醒并生成回答，课后保存课程历史与可选总结。
-> 当前文档对应 **ASR 架构重构期**：实时主链已切到本地 sherpa-onnx 连续流式接线；旧 VAD/HTTP ASR 只保留在 WAV 导入与 pending recovery 边界。自动化质量门已跑通；完整真机/MIUI 业务验收尚未完成。
+> 生产实时 ASR 固定为随 APK 内置的 X-ASR 480 单模型；旧分段 HTTP ASR 只保留在 WAV 导入与 pending recovery 边界。自动化质量门已跑通；完整真机/MIUI 业务验收尚未完成。
 
 [English summary](#english)
 
@@ -13,11 +13,11 @@
 |---|---|---|
 | JVM 全量测试 | `./gradlew :app:testDebugUnitTest --rerun-tasks` | 通过；suite/用例数量以 `app/build/test-results/testDebugUnitTest/TEST-*.xml` 即时汇总为准 |
 | Debug APK | `./gradlew :app:assembleDebug --rerun-tasks` | 构建成功；`app/build/outputs/apk/debug/app-debug.apk` 的大小用 `stat`、SHA-256 用 `sha256sum` 即时读取，不在 README 固定 |
-| 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 16 个，消费者 key 16 个，集合精确相等 |
+| 设置消费者 | `SettingConsumerMatrixTest` + 源码矩阵 | 可见设置 17 个，消费者 key 17 个，集合精确相等 |
 | Manifest/权限 | `app/src/main/AndroidManifest.xml` 静态检查 | 无 AccessibilityService、MediaProjection、`MANAGE_EXTERNAL_STORAGE`、开机自动录音 receiver；`allowBackup=false` |
 | Room | `AppDatabase` version 5 + `MIGRATION_1_2` / `MIGRATION_2_3` / `MIGRATION_3_4` / `MIGRATION_4_5` | v1→v5 migration 与课程/转写元数据/待处理音频/学习产物表保持一致 |
 | Android Lint | `./gradlew :app:lintDebug --rerun-tasks` | 文本报告为 `No issues found.` |
-| 模型 catalog | `ModelProfiles.DAILY_SELECTABLE` / `EVALUATION_CATALOG` | 本地选择器展示 `sherpa-zh-14m`、`sherpa-small-bilingual-zh-en`、`x-asr-480`、`x-asr-960`；X-ASR 需先导入模型文件，数量以源码 catalog 为准 |
+| 生产模型 | `ModelProfiles.PRODUCTION` | 唯一 ASR profile 为 `x-asr-480`，来源为 `Bundled`；APK 只包含 X-ASR 480 四个模型文件，不提供下载或选择 |
 | 即时回答 | `AnswerService` → `AnswerResultHandler` → `LiveStreamBus` / system notification | 流式状态在 App 内答案卡更新，终态答案按请求类型决定是否写 Room |
 | CI | `.github/workflows/android-ci.yml` | GitHub Actions workflow 名为 `Android CI`，保留 unit test、lint、debug build |
 | K80 安装与冷启动 smoke | ADB 安装/回读、`am start -W`、PID/Activity/logcat | 本轮未执行；当前无在线设备，JVM/APK/CI 不等同于真机验收 |
@@ -30,10 +30,10 @@
 
 ### 听讲、分段与 ASR
 
-- `AudioRecord` 以 16 kHz 单声道 PCM 采集；实时主链经 `StreamingSpeechEngine` 进入本地 sherpa-onnx 连续流式识别，保留 decoder 状态，不由 VAD 切成 HTTP 请求。
+- `AudioRecord` 以 16 kHz 单声道 PCM 采集；实时主链经 `StreamingSpeechEngine` 进入本地 sherpa-onnx 连续流式识别，保留 decoder 状态，不切成 HTTP 请求。
 - `StreamingAsrEvent` 区分可替换的 `Partial`、空 endpoint/flush 的 `UtteranceEnded` 和权威的 `Final`；只有非空 `Final` 进入事件检测、历史和 LLM，失败事件只携带封闭的安全错误类别。
-- 旧 `VadSplitter`、`SegmentSpeechEngine`、HTTP ASR 和讯飞适配器暂留在 WAV 导入/pending recovery 边界；它们不作为实时课堂链路的 fallback。
-- 本地模型可在设置页选择 14M baseline、small bilingual、X-ASR 480/960；默认仍为 14M。X-ASR 大文件不打包，需先通过 debug importer 准备对应模型文件；切换只对下一次监听生效。
+- 旧分段 HTTP ASR 和讯飞适配器暂留在 WAV 导入/pending recovery 边界；它们不作为实时课堂链路的 fallback。
+- 生产本地 ASR 只有 X-ASR 480；设置页只展示“X-ASR 中英增强模型 / 已内置 · 离线可用”，不提供模型选择、下载或 fallback。
 - 点名提醒支持 Partial exact-name fast path：仅文本精确命中且 `score=1.0` 的姓名会立即提醒；Partial 不落库、不触发 QUESTION/LLM，同一 utterance 的 Final 仍负责权威落库并抑制重复提醒；provisional 不推进确认抑制时钟。
 - Quick Settings Tile 与 Home 共用本地模型 readiness preflight；云 ASR key 不参与 live 启动资格，模型未准备成功前不会发 START。问题 suppression 只抑制同 scope 的相同 normalized fingerprint。
 - 点名名单将展示姓名、可直接称呼的昵称和仅用于 ASR 容错的变体分层保存；DIRECT 提问只接受前两者，并要求句首/呼语边界及定向续接词，避免把同音字、嵌入长姓名或普通姓名提及当成对当前学生发问。普通 ROLLCALL 仍可使用 ASR 变体；提问检测和滚动课堂上下文均有代码路径和 JVM 测试，实时提醒当前只保留振动与系统通知。
@@ -102,7 +102,7 @@ Command Code 预设会在请求中关闭 thinking（`thinking.type=disabled`）�
 | 分组 | 已接入行为 |
 |---|---|
 | 点名/提问 | 展示姓名/可称呼昵称/ASR 容错变体、中文定向前缀与局部缺席判断、匹配灵敏度、点名/提问抑制窗口、提问词等级 |
-| 本地 ASR | 可选择本地 streaming profile；模型按所选 profile 安装/复用，旧 VAD/HTTP ASR 只在导入/恢复边界使用 |
+| 本地 ASR | 固定使用 APK 内置 X-ASR 480；安装到 app-private 目录前做空间、size、SHA-256 和 marker 校验，旧分段 HTTP ASR 只在导入/恢复边界使用 |
 | 提醒 | 振动与系统通知两个通道、锁屏内容固定隐藏、震动模式；不修改系统音量 |
 | AI | Base URL、AI key、模型、回答长度、答案风格、流式输出 |
 | 数据/通用 | 清空问答历史、跟随系统/深色/浅色模式 |
@@ -172,14 +172,14 @@ Windows 命令提示符或 PowerShell 可将 `./gradlew` 替换为 `gradlew.bat`
 1. 在引导中录入展示姓名；可称呼昵称用于定向提问，ASR 变体仅用于识别容错。
 2. 授予麦克风、通知权限；答案通过系统通知和 App 内答案卡显示。
 3. 在 AI 设置中选择预设并填写 AI key；ASR key 在“语音”分组单独填写。
-4. 在“本地转写”中选择四个本地模型之一；X-ASR 480/960 不随 APK 打包，需先导入对应四文件。
+4. “语音识别模型”显示唯一的 X-ASR 480 内置模型；首次监听会把 APK asset 安装到 app-private 目录并校验完整性。
 5. 先用自检页确认权限和配置，再开始听讲。
 
 ## 项目结构
 
 ```text
 app/src/main/java/com/classsentinel/
-├── core/audio       # AudioRecord、VAD、WAV 分段、失败片段私有存储
+├── core/audio       # AudioRecord、WAV 分段、失败片段私有存储
 ├── core/speech      # 流式 ASR 契约、本地 sherpa 实现、legacy 分段路由
 ├── core/context     # 最近课堂上下文
 ├── core/detect      # 点名/提问检测
@@ -203,9 +203,9 @@ app/src/main/java/com/classsentinel/
 
 ## English
 
-ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds a user-selectable local sherpa-onnx streaming ASR profile, then detects name calls and questions, presents alerts, and stores course history locally. Legacy VAD/HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
+ClassSentinel is an Android classroom assistant. Its live listening path captures foreground audio and feeds the single bundled X-ASR 480 sherpa-onnx streaming profile, then detects name calls and questions, presents alerts, and stores course history locally. Legacy segmented HTTP ASR remains isolated for import/recovery paths. Optional answers and summaries use a user-configured OpenAI-compatible LLM.
 
-The current source has a verified JVM gate, a clean Android Lint report, and a successful debug APK build. Exact suite/test totals are derived from the generated XML reports rather than fixed in this document. Room schema version 5 uses the checked-in v1→v5 migrations. The live model selector exposes the 14M baseline, small bilingual, X-ASR 480, and X-ASR 960 profiles; the default remains the 14M baseline. X-ASR files are not bundled and must be prepared through the debug importer before listening. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions and rollcall context per name occurrence rather than globally. Answer updates use the system notification plus an in-app answer card; this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
+The current source has a verified JVM gate, a clean Android Lint report, and a successful debug APK build. Exact suite/test totals are derived from the generated XML reports rather than fixed in this document. Room schema version 5 uses the checked-in v1→v5 migrations. The only production model is the bundled X-ASR 480 profile; there is no model selector, remote download, or ASR fallback. Rollcall alerts have an exact-name partial fast path while final text remains authoritative for persistence; Home and Quick Settings share the local model readiness preflight, and question suppression only blocks same-scope identical normalized fingerprints. Direct question targeting separates display names and explicit spoken aliases from ASR-only variants, accepts attached Chinese request prefixes, and applies absence exclusions and rollcall context per name occurrence rather than globally. Answer updates use the system notification plus an in-app answer card; this is not a device certification: MIUI background limits, real local-ASR accuracy, long-running capture, import/replay behavior, Quick Settings interaction, and offline-to-online recovery still require controlled Android testing.
 
 Important privacy boundaries:
 

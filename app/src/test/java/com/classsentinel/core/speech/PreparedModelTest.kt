@@ -11,7 +11,7 @@ class PreparedModelTest {
 
     @Test
     fun `prepared model binds profile identity and artifact set hash`() {
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M
+        val profile = ModelProfiles.PRODUCTION
         val engine = BoundFakeEngine(
             modelProfileId = profile.id,
             sampleRate = profile.recognizer.sampleRate,
@@ -26,9 +26,9 @@ class PreparedModelTest {
 
     @Test
     fun `prepared model rejects engine from another profile`() {
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M
+        val profile = ModelProfiles.PRODUCTION
         val engine = BoundFakeEngine(
-            modelProfileId = "x-asr-960",
+            modelProfileId = "other-profile",
             sampleRate = profile.recognizer.sampleRate,
         )
 
@@ -39,7 +39,7 @@ class PreparedModelTest {
 
     @Test
     fun `prepared model rejects engine with a different profile sample rate`() {
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M
+        val profile = ModelProfiles.PRODUCTION
         val engine = BoundFakeEngine(
             modelProfileId = profile.id,
             sampleRate = 8_000,

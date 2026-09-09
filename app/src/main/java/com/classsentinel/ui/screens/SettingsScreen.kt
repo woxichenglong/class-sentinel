@@ -50,13 +50,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.work.WorkManager
 import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.AnswerTriggerMode
-import com.classsentinel.core.speech.ModelReadinessChecker
-import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.data.AiSettings
 import com.classsentinel.data.AnswerHistoryRepository
 import com.classsentinel.data.AppDatabase
@@ -64,7 +61,6 @@ import com.classsentinel.data.Channels
 import com.classsentinel.data.SettingsRepository
 import com.classsentinel.data.SettingsRepositoryHolder
 import com.classsentinel.worker.AsrSettingsActionCoordinator
-import com.classsentinel.worker.WorkManagerModelDownloadActions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import android.Manifest
@@ -95,12 +91,8 @@ fun SettingsScreen() {
     val streamOutput by repo.streamOutputFlow.collectAsState(initial = true)
     val answerTriggerMode by repo.answerTriggerModeFlow.collectAsState(initial = AnswerTriggerMode.DEFAULT)
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
-    val preferredLocalModelId by repo.preferredLocalModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
     val asrEngine by repo.asrEngineFlow.collectAsState(initial = "telespeech")
     val asrActions = remember(context, repo) { AsrSettingsActionCoordinator.create(context, repo) }
-    val readinessChecker = remember(context.filesDir) { ModelReadinessChecker(context.filesDir) }
-    val workManager = remember(context) { WorkManager.getInstance(context) }
-    val downloadActions = remember(workManager) { WorkManagerModelDownloadActions(workManager) }
 
     var draftName by rememberSaveable { mutableStateOf("") }
     var draftAliases by rememberSaveable { mutableStateOf("") }
@@ -109,7 +101,6 @@ fun SettingsScreen() {
     var clearMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var asrSiliconKeyDraft by rememberSaveable { mutableStateOf("") }
     var asrConfigMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    var modelActionMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun saveSnap(action: suspend () -> Unit) {
         scope.launch {
@@ -450,37 +441,11 @@ fun SettingsScreen() {
         item {
             SectionCard("语音识别模型") {
                 Text(
-                    "偏好模型只保存用户选择，不改变当前课堂 runtime；远程模型必须完成真实文件校验后才能使用。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "X-ASR 中英增强模型",
+                    style = MaterialTheme.typography.bodyLarge,
                 )
-                Spacer(Modifier.height(8.dp))
-                val actionHandler = remember(context.filesDir, downloadActions) {
-                    LocalAsrModelActionHandler(
-                        actions = downloadActions,
-                        hasEnoughStorage = { profile -> hasEnoughModelStorage(context.filesDir, profile) },
-                        onMessage = { modelActionMessage = it },
-                    )
-                }
-                LocalAsrModelCards(
-                    profiles = ModelProfiles.EVALUATION_CATALOG,
-                    filesDir = context.filesDir,
-                    preferredModelId = preferredLocalModelId,
-                    readinessChecker = readinessChecker,
-                    workManager = workManager,
-                    actionHandler = actionHandler,
-                    onSelect = { profile ->
-                        saveSnap {
-                            repo.savePreferredLocalModel(profile.id)
-                            modelActionMessage = "已保存偏好：${profile.displayName}；当前课堂 runtime 不变"
-                        }
-                    },
-                )
-                modelActionMessage?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall)
-                }
                 Text(
-                    "取消下载会保留 .part，之后可继续；本页面不提供删除模型。",
+                    "已内置 · 离线可用",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

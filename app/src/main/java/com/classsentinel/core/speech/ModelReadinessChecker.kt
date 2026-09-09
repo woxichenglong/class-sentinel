@@ -18,6 +18,7 @@ internal class ModelReadinessChecker(
     private val probe: (File, ModelProfile) -> Boolean = { root, profile ->
         ModelIntegrityVerifier.isInstalled(root, profile)
     },
+    private val availableSpace: (File) -> Long = ::modelUsableSpace,
 ) {
 
     suspend fun isReady(profile: ModelProfile): Boolean = withContext(dispatcher) {
@@ -34,12 +35,16 @@ internal class ModelReadinessChecker(
             SherpaModelInstaller(
                 filesDir = filesDir,
                 profile = profile,
+                availableSpace = availableSpace,
                 assetOpener = assetOpener,
             ).install()
             invalidate(profile)
             isReadyOnIo(profile)
         } catch (error: CancellationException) {
             throw error
+        } catch (error: IllegalStateException) {
+            if (error.message == ASR_MODEL_STORAGE_INSUFFICIENT) throw error
+            false
         } catch (_: Exception) {
             false
         }

@@ -45,6 +45,9 @@ class LlmClient(
                 payload.put("thinking", JSONObject().put("type", "disabled"))
             }
             cfg.maxTokens?.let { payload.put("max_tokens", it) }
+            if (cfg.responseFormatJsonObject) {
+                payload.put("response_format", JSONObject().put("type", "json_object"))
+            }
             val bodyStr = payload.toString()
             val req = Request.Builder()
                 .url("${cfg.baseUrl.trimEnd('/')}/chat/completions")

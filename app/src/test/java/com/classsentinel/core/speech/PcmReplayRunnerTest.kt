@@ -19,8 +19,8 @@ class PcmReplayRunnerTest {
         val clock = FakeClock()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
-            override val sampleRate = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.sampleRate
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
+            override val sampleRate = ModelProfiles.PRODUCTION.recognizer.sampleRate
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
                 pcm.toList()
@@ -31,7 +31,7 @@ class PcmReplayRunnerTest {
             }
         }
         val runner = PcmReplayRunner(nowNanos = { clock.nowNanos })
-        val preparedModel = PreparedModel.from(ModelProfiles.ZIPFORMER_ZH_14M, engine)
+        val preparedModel = PreparedModel.from(ModelProfiles.PRODUCTION, engine)
 
         val result = runner.run(
             preparedModel = preparedModel,
@@ -41,7 +41,7 @@ class PcmReplayRunnerTest {
             pcm = flowOf(ShortArray(16_000)),
         )
 
-        assertEquals("sherpa-zh-14m", result.modelProfileId)
+        assertEquals(ModelProfiles.PRODUCTION.id, result.modelProfileId)
         assertEquals("abc1234", result.gitCommitSha)
         assertEquals("run-001", result.runId)
         assertEquals(ReplayPhase.WARM, result.phase)
@@ -65,8 +65,8 @@ class PcmReplayRunnerTest {
         val waits = mutableListOf<Long>()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
-            override val sampleRate = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.sampleRate
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
+            override val sampleRate = ModelProfiles.PRODUCTION.recognizer.sampleRate
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
                 pcm.collect { chunk -> chunkSizes += chunk.size }
@@ -77,7 +77,7 @@ class PcmReplayRunnerTest {
             nowNanos = { 0L },
             delayBetweenPackets = { waits += it },
         )
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M
+        val profile = ModelProfiles.PRODUCTION
         val preparedModel = PreparedModel.from(profile, engine)
 
         val result = runner.runWav(
@@ -102,7 +102,7 @@ class PcmReplayRunnerTest {
         val receivedChunks = mutableListOf<Int>()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
             override val sampleRate = 1_000
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
@@ -114,7 +114,7 @@ class PcmReplayRunnerTest {
 
         // Future API: recognizer opts into artifact streaming at 960-sample chunks; the
         // independent ReplayInputConfig packet must win over this recognizer-level chunking.
-        val baseProfile = ModelProfiles.ZIPFORMER_ZH_14M
+        val baseProfile = ModelProfiles.PRODUCTION
         val profile = baseProfile.copy(recognizer = baseProfile.recognizer.copy(artifactStreamingChunkMs = 960, sampleRate = 1_000))
         val preparedModel = PreparedModel.from(profile, engine)
 
@@ -139,7 +139,7 @@ class PcmReplayRunnerTest {
         val waits = mutableListOf<Long>()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
             override val sampleRate = 1_000
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
@@ -159,8 +159,8 @@ class PcmReplayRunnerTest {
             },
         )
 
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
-            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 1_000),
+        val profile = ModelProfiles.PRODUCTION.copy(
+            recognizer = ModelProfiles.PRODUCTION.recognizer.copy(sampleRate = 1_000),
         )
         val preparedModel = PreparedModel.from(profile, engine)
         val result = runner.runWav(
@@ -184,7 +184,7 @@ class PcmReplayRunnerTest {
         val receivedChunks = mutableListOf<Int>()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
             override val sampleRate = 1_000
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
@@ -197,8 +197,8 @@ class PcmReplayRunnerTest {
                 emit(StreamingAsrEvent.Final(1, "直接回放", 0L, 250L))
             }
         }
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
-            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 1_000),
+        val profile = ModelProfiles.PRODUCTION.copy(
+            recognizer = ModelProfiles.PRODUCTION.recognizer.copy(sampleRate = 1_000),
         )
         val runner = PcmReplayRunner(
             nowNanos = { clock.nowNanos },
@@ -234,7 +234,7 @@ class PcmReplayRunnerTest {
         val waits = mutableListOf<Long>()
         val engine = object : ProfileBoundStreamingSpeechEngine {
             override val name = "slow-init-fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
             override val sampleRate = 1_000
 
             override fun transcribe(pcm: Flow<ShortArray>): Flow<StreamingAsrEvent> = flow {
@@ -245,8 +245,8 @@ class PcmReplayRunnerTest {
                 emit(StreamingAsrEvent.Final(1, "初始化后回放", 0L, 300L))
             }
         }
-        val profile = ModelProfiles.ZIPFORMER_ZH_14M.copy(
-            recognizer = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.copy(sampleRate = 1_000),
+        val profile = ModelProfiles.PRODUCTION.copy(
+            recognizer = ModelProfiles.PRODUCTION.recognizer.copy(sampleRate = 1_000),
         )
         val runner = PcmReplayRunner(
             nowNanos = { clock.nowNanos },
@@ -278,8 +278,8 @@ class PcmReplayRunnerTest {
         val clock = FakeClock()
         val engine = object : ProfileBoundStreamingSpeechEngine, ReplayTimingSource {
             override val name = "timed-fake"
-            override val modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id
-            override val sampleRate = ModelProfiles.ZIPFORMER_ZH_14M.recognizer.sampleRate
+            override val modelProfileId = ModelProfiles.PRODUCTION.id
+            override val sampleRate = ModelProfiles.PRODUCTION.recognizer.sampleRate
             override val lastReplayTimings = StreamingAsrTimings(
                 recognizerInitMs = 7L,
                 decodeElapsedMs = 13L,
@@ -292,7 +292,7 @@ class PcmReplayRunnerTest {
             }
         }
         val result = PcmReplayRunner(nowNanos = { clock.nowNanos }).run(
-            preparedModel = PreparedModel.from(ModelProfiles.ZIPFORMER_ZH_14M, engine),
+            preparedModel = PreparedModel.from(ModelProfiles.PRODUCTION, engine),
             gitCommitSha = "abc1234",
             runId = "run-timing-001",
             phase = ReplayPhase.STEADY,

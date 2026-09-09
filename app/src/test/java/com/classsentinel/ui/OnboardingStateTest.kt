@@ -5,6 +5,7 @@ import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
+import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.data.InMemorySecretStore
 import com.classsentinel.data.SettingsRepository
 import java.io.File
@@ -53,6 +54,15 @@ class OnboardingStateTest {
         assertEquals(HOME_ROUTE, startDestinationForOnboarding(completed = true))
         assertFalse(isBottomBarRoute(ONBOARDING_ROUTE))
         assertTrue(isBottomBarRoute(HOME_ROUTE))
+        val existing = listOf(NameEntry("原姓名", emptyList(), emptyList()))
+        assertFalse(shouldShowOnboarding(completed = false, names = existing))
+        assertTrue(
+            shouldShowOnboarding(
+                completed = false,
+                names = existing,
+                nameSavedInCurrentOnboarding = true,
+            ),
+        )
     }
 
     @Test

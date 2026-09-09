@@ -36,7 +36,7 @@ class UnifiedAsrScorerTest {
             ),
         )
 
-        assertEquals("sherpa-zh-14m", score.modelProfileId)
+        assertEquals(ModelProfiles.PRODUCTION.id, score.modelProfileId)
         assertEquals("abc1234", score.gitCommitSha)
         assertEquals("run-001", score.runId)
         assertEquals(ReplayPhase.WARM, score.phase)
@@ -138,7 +138,7 @@ class UnifiedAsrScorerTest {
         decodeElapsedMs: Long? = null,
         events: List<ReplayObservation> = emptyList(),
     ) = PcmReplayResult(
-        modelProfileId = ModelProfiles.ZIPFORMER_ZH_14M.id,
+        modelProfileId = ModelProfiles.PRODUCTION.id,
         gitCommitSha = "abc1234",
         runId = "run-001",
         phase = ReplayPhase.WARM,

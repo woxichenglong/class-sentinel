@@ -41,13 +41,14 @@ import androidx.core.content.ContextCompat
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.core.speech.LocalListenStartPreflight
-import com.classsentinel.core.speech.ModelProfile
 import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ModelProfiles
+import com.classsentinel.core.speech.ASR_MODEL_STORAGE_INSUFFICIENT
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveStreamBus
 import com.classsentinel.ui.isSessionActive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -70,9 +71,8 @@ internal fun homeStateText(state: PipelineState): String = when (state) {
 
 internal fun localAsrModelReady(
     filesDir: File,
-    profile: ModelProfile = ModelProfiles.ZIPFORMER_ZH_14M,
 ): Boolean {
-    return SherpaModelInstaller.isInstalled(filesDir, profile)
+    return SherpaModelInstaller.isInstalled(filesDir, ModelProfiles.PRODUCTION)
 }
 
 /** Student home: one-tap listening, identity, and local model readiness. */
@@ -83,9 +83,6 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val activeCourseId by LiveStreamBus.activeCourseId.collectAsState()
     val historyDegraded by LiveStreamBus.historyDegraded.collectAsState()
     val names by AppConfig.names.collectAsState()
-    val settings = remember { com.classsentinel.data.SettingsRepositoryHolder.get(context) }
-    val localAsrModelId by settings.localAsrModelIdFlow.collectAsState(initial = ModelProfiles.ZIPFORMER_ZH_14M.id)
-    val localAsrProfile = ModelProfiles.resolveDaily(localAsrModelId)
     val localListenPreflight = remember(context.filesDir) {
         LocalListenStartPreflight(
             readinessChecker = ModelReadinessChecker(context.filesDir),
@@ -93,10 +90,10 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
         )
     }
     val preparationScope = rememberCoroutineScope()
-    var modelReady by remember(localAsrProfile.id) { mutableStateOf<Boolean?>(null) }
-    var preparingModel by remember(localAsrProfile.id) { mutableStateOf(false) }
-    LaunchedEffect(pipelineState, localAsrProfile.id) {
-        modelReady = localListenPreflight.isReady(localAsrProfile)
+    var modelReady by remember { mutableStateOf<Boolean?>(null) }
+    var preparingModel by remember { mutableStateOf(false) }
+    LaunchedEffect(pipelineState) {
+        modelReady = localListenPreflight.isReady(ModelProfiles.PRODUCTION)
     }
 
     val listening = pipelineState.isSessionActive() || activeCourseId != null
@@ -114,21 +111,34 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
             if (preparingModel) return
             preparingModel = true
             preparationScope.launch {
-                val prepared = localListenPreflight.ensureReady(
-                    profile = localAsrProfile,
-                )
-                modelReady = prepared
-                preparingModel = false
-                if (prepared) {
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        ListenService.start(context)
+                try {
+                    val prepared = localListenPreflight.ensureReady(
+                        profile = ModelProfiles.PRODUCTION,
+                    )
+                    modelReady = prepared
+                    preparingModel = false
+                    if (prepared) {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            ListenService.start(context)
+                        } else {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
                     } else {
-                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        Toast.makeText(context, "模型未准备，无法开始监听", Toast.LENGTH_SHORT).show()
                     }
-                } else {
-                    Toast.makeText(context, "模型未准备，无法开始监听", Toast.LENGTH_SHORT).show()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: IllegalStateException) {
+                    modelReady = false
+                    preparingModel = false
+                    val message = if (error.message == ASR_MODEL_STORAGE_INSUFFICIENT) {
+                        "存储空间不足，无法安装 X-ASR 480 模型"
+                    } else {
+                        "模型未准备，无法开始监听"
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }
             }
         } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -203,7 +213,7 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
                         },
                     )
                 }
-                Text(localAsrProfile.displayName, style = MaterialTheme.typography.bodySmall)
+                Text(ModelProfiles.PRODUCTION.displayName, style = MaterialTheme.typography.bodySmall)
             }
         }
 

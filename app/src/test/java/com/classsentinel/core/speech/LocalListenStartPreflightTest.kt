@@ -27,8 +27,8 @@ class LocalListenStartPreflightTest {
             assetOpener = { error("asset opener must not run for an already-ready model") },
         )
 
-        assertTrue(preflight.isReady(ModelProfiles.ZIPFORMER_ZH_14M))
-        assertTrue(preflight.ensureReady(ModelProfiles.ZIPFORMER_ZH_14M))
+        assertTrue(preflight.isReady(ModelProfiles.PRODUCTION))
+        assertTrue(preflight.ensureReady(ModelProfiles.PRODUCTION))
         assertEquals(1, probes)
         root.deleteRecursively()
     }

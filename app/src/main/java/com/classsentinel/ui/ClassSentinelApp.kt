@@ -34,7 +34,7 @@ import com.classsentinel.ui.screens.HomeScreen
 import com.classsentinel.ui.screens.LiveScreen
 import com.classsentinel.ui.screens.OnboardingScreen
 import com.classsentinel.ui.screens.SettingsScreen
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 
 private data class BottomTab(val route: String, val label: String, val icon: @Composable () -> Unit)
 
@@ -43,7 +43,13 @@ fun ClassSentinelApp(initialEventId: Long? = null) {
     val context = LocalContext.current
     val settings = remember { com.classsentinel.data.SettingsRepositoryHolder.get(context) }
     val onboardingFlow = remember(settings) {
-        settings.onboardingCompletedFlow.map { completed -> completed as Boolean? }
+        combine(
+            settings.onboardingCompletedFlow,
+            settings.nameListFlow,
+            settings.onboardingNameSavedFlow,
+        ) { completed, names, nameSavedInCurrentOnboarding ->
+            !shouldShowOnboarding(completed, names, nameSavedInCurrentOnboarding)
+        }
     }
     val onboardingCompleted by onboardingFlow
         .collectAsState(initial = null)

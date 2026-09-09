@@ -118,6 +118,35 @@ class SherpaModelInstallerTest {
         }
     }
 
+    @Test
+    fun `insufficient storage fails before opening assets and leaves no ready marker`() {
+        val root = Files.createTempDirectory("sherpa-installer-storage-").toFile()
+        try {
+            val profile = testProfile()
+            val target = File(root, "asr/${profile.artifact.directory}").apply { mkdirs() }
+            File(target, ModelIntegrityVerifier.MARKER_FILE_NAME)
+                .writeText(ModelIntegrityVerifier.markerContent(profile))
+            var assetOpens = 0
+            val installer = SherpaModelInstaller(
+                filesDir = root,
+                profile = profile,
+                assetOpener = {
+                    assetOpens++
+                    ByteArrayInputStream(modelFiles.getValue(it.substringAfterLast('/')))
+                },
+                availableSpace = { 0L },
+            )
+
+            val error = assertThrows(IllegalStateException::class.java) { installer.install() }
+
+            assertEquals(ASR_MODEL_STORAGE_INSUFFICIENT, error.message)
+            assertEquals(0, assetOpens)
+            assertFalse(File(target, ModelIntegrityVerifier.MARKER_FILE_NAME).exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun installerFor(root: File): SherpaModelInstaller =
         SherpaModelInstaller(filesDir = root, profile = testProfile()) { assetPath ->
             val name = assetPath.substringAfterLast('/')
@@ -125,7 +154,7 @@ class SherpaModelInstallerTest {
         }
 
     private fun testProfile(): ModelProfile {
-        val baseline = ModelProfiles.ZIPFORMER_ZH_14M
+        val baseline = ModelProfiles.PRODUCTION
         return baseline.copy(
             artifact = baseline.artifact.copy(
                 directory = "test-model",

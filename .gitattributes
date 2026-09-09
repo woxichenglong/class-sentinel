@@ -3,3 +3,4 @@
 # (the Windows default) that would otherwise mark the whole tree stale.
 # Binaries are auto-detected and left untouched.
 * text=auto eol=lf
+app/src/main/assets/asr/x-asr-zh-en-480ms/*.onnx filter=lfs diff=lfs merge=lfs -text

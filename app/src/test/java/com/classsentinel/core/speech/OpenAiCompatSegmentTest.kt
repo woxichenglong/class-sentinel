@@ -1,11 +1,9 @@
 package com.classsentinel.core.speech
 
-import com.classsentinel.core.audio.VadSplitter
 import com.classsentinel.core.audio.WavSegment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.toList
+
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
@@ -58,11 +56,14 @@ class OpenAiCompatSegmentTest {
         return compat
     }
 
-    private suspend fun wavSegment(id: String = "s1", samples: Int = 8000): WavSegment =
-        VadSplitter().segments(flowOf(ShortArray(samples) { 8000 })).toList().let {
-            // 复用 M1a 分段器的稳定 String id；仅当传入 id 需要覆盖时才调整
-            if (id != "s1") it[0].copy(id = id) else it[0]
+    private fun wavSegment(id: String = "s1", samples: Int = 8000): WavSegment {
+        val dataLength = samples * 2
+        val bytes = ByteArray(44 + dataLength)
+        repeat(4) { index ->
+            bytes[40 + index] = (dataLength shr (8 * index)).toByte()
         }
+        return WavSegment(id, startOffsetMs = 0L, endOffsetMs = 1_000L, bytes = bytes)
+    }
 
     // ---- 新主路径：单段转写 ---- //
 

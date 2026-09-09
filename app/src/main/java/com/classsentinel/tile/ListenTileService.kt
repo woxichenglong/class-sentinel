@@ -12,10 +12,8 @@ import androidx.core.content.ContextCompat
 import com.classsentinel.MainActivity
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.core.speech.LocalListenStartPreflight
-import com.classsentinel.core.speech.ModelProfile
 import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ModelProfiles
-import com.classsentinel.data.SettingsRepositoryHolder
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveStreamBus
 import kotlinx.coroutines.CancellationException
@@ -24,7 +22,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal enum class TilePresentation {
@@ -183,26 +180,17 @@ class ListenTileService : TileService() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** Resolve the same dedicated local profile that Home/ListenService use. */
-    private suspend fun selectedLocalProfile(): ModelProfile? {
-        return try {
-            val settings = SettingsRepositoryHolder.get(applicationContext)
-            settings.load()
-            ModelProfiles.resolveDaily(settings.localAsrModelIdFlow.first())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private suspend fun hasStartPrerequisites(): Boolean {
-        val profile = selectedLocalProfile() ?: return false
-        return hasMicrophonePermission() && localListenPreflight.isReady(profile)
+        return hasMicrophonePermission() && localListenPreflight.isReady(ModelProfiles.PRODUCTION)
     }
 
     private suspend fun ensureLocalModelReady(): Boolean {
-        val profile = selectedLocalProfile() ?: return false
-        return localListenPreflight.ensureReady(profile)
+        return try {
+            localListenPreflight.ensureReady(ModelProfiles.PRODUCTION)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: IllegalStateException) {
+            false
+        }
     }
 }
