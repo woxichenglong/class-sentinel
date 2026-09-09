@@ -51,7 +51,7 @@ internal fun initialOnboardingStep(
     else -> OnboardingStep.AiConfig
 }
 
-/** 保存现有 AI 配置后做一次固定 JSON 连通性检查；状态本身不持久化。 */
+/** 先检查 AI 草稿，只有连通性成功才保存；状态本身不持久化。 */
 internal suspend fun saveAndCheckAi(
     draft: AiSettings,
     save: suspend (AiSettings) -> Unit,
@@ -63,12 +63,20 @@ internal suspend fun saveAndCheckAi(
         return AiSetupState.Failed(AiSetupFailure.CONFIG)
     }
 
+    val connectivity = try {
+        checker.check(normalized)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        return AiSetupState.Failed(AiSetupFailure.UNKNOWN)
+    }
+    if (connectivity is AiConnectivityResult.Failure) {
+        return AiSetupState.Failed(connectivity.reason)
+    }
+
     return try {
         save(normalized)
-        when (val result = checker.check(normalized)) {
-            AiConnectivityResult.Success -> AiSetupState.Ready
-            is AiConnectivityResult.Failure -> AiSetupState.Failed(result.reason)
-        }
+        AiSetupState.Ready
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {

@@ -15,6 +15,31 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: true
+
+      - name: Verify bundled X480 model assets
+        working-directory: app/src/main/assets/asr/x-asr-zh-en-480ms
+        run: |
+          set -euo pipefail
+          verify_asset() {
+            local file="$1"
+            local expected_bytes="$2"
+            local expected_sha="$3"
+            test -f "$file"
+            local actual_bytes
+            actual_bytes="$(stat -c '%s' "$file")"
+            test "$actual_bytes" -eq "$expected_bytes"
+            local actual_sha
+            actual_sha="$(sha256sum "$file")"
+            actual_sha="${actual_sha%% *}"
+            test "$actual_sha" = "$expected_sha"
+            printf '%s bytes=%s sha256=%s\n' "$file" "$actual_bytes" "$actual_sha"
+          }
+          verify_asset encoder-480ms.onnx 592968361 0c3454033d249081df124ddcd7adaf3deca07d0b999b26f2ee5d2475d37abc74
+          verify_asset decoder-480ms.onnx 11309084 3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499
+          verify_asset joiner-480ms.onnx 10260467 03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81
+          verify_asset tokens.txt 58806 b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c
 
       - name: Set up JDK 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5

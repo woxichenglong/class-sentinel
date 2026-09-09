@@ -28,6 +28,7 @@ class NameVoiceCalibratorTest {
             ),
         )
 
+        assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
         val result = calibrator.captureOnce("梁津淦")
 
         assertEquals(NameCalibrationAttempt.Success("梁津干"), result)
@@ -48,6 +49,7 @@ class NameVoiceCalibratorTest {
             ),
         )
 
+        assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
         val result = calibrator.captureOnce("梁津淦")
 
         assertEquals(NameCalibrationAttempt.Failure(NameCalibrationFailure.TIMEOUT), result)
@@ -64,6 +66,7 @@ class NameVoiceCalibratorTest {
             engineFactory = { throw IllegalStateException("synthetic X480 init failure") },
         )
 
+        assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
         val result = calibrator.captureOnce("梁津淦")
 
         assertEquals(
@@ -90,14 +93,86 @@ class NameVoiceCalibratorTest {
             },
         )
 
+        val prepareResult = calibrator.prepare()
         val result = calibrator.captureOnce("梁津淦")
 
         assertEquals(
-            NameCalibrationAttempt.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE),
-            result,
+            NameCalibrationPrepareResult.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE),
+            prepareResult,
         )
+        assertEquals(NameCalibrationAttempt.Failure(NameCalibrationFailure.PREPARE_REQUIRED), result)
         assertTrue(!audioCreated)
         assertTrue(!engineCreated)
+    }
+
+    @Test
+    fun `capture before prepare is rejected without creating capture resources`() = runTest {
+        var audioCreated = false
+        var engineCreated = false
+        val calibrator = X480NameVoiceCalibrator(
+            ensureReady = { error("prepare must be explicit") },
+            audioFactory = {
+                audioCreated = true
+                FakeAudioCapture(flowOf(shortArrayOf(1)))
+            },
+            modelDirectory = { File("build/name-calibration") },
+            engineFactory = {
+                engineCreated = true
+                FakeEngine(flowOf(StreamingAsrEvent.Final(1, "不会调用", 0L, 0L)))
+            },
+        )
+
+        val result = calibrator.captureOnce("梁津淦")
+
+        assertEquals(NameCalibrationAttempt.Failure(NameCalibrationFailure.PREPARE_REQUIRED), result)
+        assertTrue(!audioCreated)
+        assertTrue(!engineCreated)
+    }
+
+    @Test
+    fun `successful prepare runs once and is reused by three captures`() = runTest {
+        var prepareCalls = 0
+        val audio = FakeAudioCapture(flowOf(shortArrayOf(1)))
+        val calibrator = X480NameVoiceCalibrator(
+            ensureReady = {
+                prepareCalls++
+                true
+            },
+            audioFactory = { audio },
+            modelDirectory = { File("build/name-calibration") },
+            engineFactory = { FakeEngine(flowOf(StreamingAsrEvent.Final(1, "梁津干", 0L, 0L))) },
+        )
+
+        assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
+        assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
+        repeat(3) { assertTrue(calibrator.captureOnce("梁津淦") is NameCalibrationAttempt.Success) }
+
+        assertEquals(1, prepareCalls)
+    }
+
+    @Test
+    fun `failed prepare can be retried before capture`() = runTest {
+        var prepareCalls = 0
+        val audio = FakeAudioCapture(flowOf(shortArrayOf(1)))
+        val calibrator = X480NameVoiceCalibrator(
+            ensureReady = {
+                prepareCalls++
+                prepareCalls > 1
+            },
+            audioFactory = { audio },
+            modelDirectory = { File("build/name-calibration") },
+            engineFactory = { FakeEngine(flowOf(StreamingAsrEvent.Final(1, "梁津干", 0L, 0L))) },
+        )
+
+        assertEquals(
+            NameCalibrationPrepareResult.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE),
+            calibrator.prepare(),
+        )
+        assertEquals(NameCalibrationAttempt.Failure(NameCalibrationFailure.PREPARE_REQUIRED), calibrator.captureOnce("梁津淦"))
+        assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
+        assertTrue(calibrator.captureOnce("梁津淦") is NameCalibrationAttempt.Success)
+
+        assertEquals(2, prepareCalls)
     }
 
     @Test
@@ -114,6 +189,7 @@ class NameVoiceCalibratorTest {
             ),
         )
         val request = launch {
+            assertEquals(NameCalibrationPrepareResult.Ready, calibrator.prepare())
             calibrator.captureOnce("梁津淦")
         }
 
@@ -139,6 +215,7 @@ class NameVoiceCalibratorTest {
             ),
         )
 
+        assertEquals(NameCalibrationPreparation.READY, controller.prepare().preparation)
         controller.captureNext()
         controller.captureNext()
         val finalState = controller.captureNext()
@@ -163,6 +240,7 @@ class NameVoiceCalibratorTest {
         )
         val controller = NameCalibrationController("梁津淦", emptyList(), fake)
 
+        controller.prepare()
         controller.captureNext()
         val failed = controller.captureNext()
         assertEquals(1, failed.completedSlots)
@@ -172,6 +250,27 @@ class NameVoiceCalibratorTest {
         val retried = controller.captureNext()
         assertEquals(2, retried.completedSlots)
         assertEquals(listOf("第一个", "第二个"), retried.measuredTranscripts)
+    }
+
+    @Test
+    fun `prepare failure can skip calibration while preserving AI seed`() = runTest {
+        val fake = FakeCalibrator(
+            results = emptyList(),
+            preparation = NameCalibrationPrepareResult.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE),
+        )
+        val controller = NameCalibrationController(
+            displayName = "梁津淦",
+            aiSeedVariants = listOf("梁津干"),
+            calibrator = fake,
+        )
+
+        val failed = controller.prepare()
+        controller.skipAll()
+
+        assertEquals(NameCalibrationPreparation.FAILED, failed.preparation)
+        assertTrue(controller.state.finished)
+        assertEquals(listOf("梁津干"), controller.mergedVariants())
+        assertEquals(0, fake.calls)
     }
 
     @Test
@@ -230,8 +329,11 @@ class NameVoiceCalibratorTest {
 
     private class FakeCalibrator(
         private val results: List<NameCalibrationAttempt>,
+        private val preparation: NameCalibrationPrepareResult = NameCalibrationPrepareResult.Ready,
     ) : NameVoiceCalibrator {
         var calls = 0
+
+        override suspend fun prepare(): NameCalibrationPrepareResult = preparation
 
         override suspend fun captureOnce(expectedDisplayName: String): NameCalibrationAttempt =
             results.getOrElse(calls++) { NameCalibrationAttempt.Failure(NameCalibrationFailure.UNKNOWN) }

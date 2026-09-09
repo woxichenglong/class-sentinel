@@ -1,5 +1,6 @@
 package com.classsentinel.core.speech
 
+import com.classsentinel.core.llm.NameVariantSanitizer
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -38,6 +39,21 @@ class NameVariantMergePolicyTest {
                 measuredTranscripts = listOf("梁津干", "梁金干"),
             ),
         )
+    }
+
+    @Test
+    fun `measured candidates keep real X480 mistakes that AI semantic filtering rejects`() {
+        val measured = listOf("梁金刚", "今天")
+
+        assertEquals(
+            listOf("梁金刚", "今天"),
+            NameVariantMergePolicy.merge(
+                displayName = "梁津淦",
+                aiSeedVariants = emptyList(),
+                measuredTranscripts = measured,
+            ),
+        )
+        assertEquals(emptyList<String>(), NameVariantSanitizer.sanitize("梁津淦", measured))
     }
 
     @Test

@@ -14,6 +14,7 @@ class ReleaseEngineeringTest {
 
         assertTrue(workflow.contains("permissions:\n  contents: read"))
         assertTrue(workflow.contains("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"))
+        assertTrue(workflow.contains("uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6\n        with:\n          lfs: true"))
         assertTrue(workflow.contains("actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961"))
         assertTrue(workflow.contains("gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb"))
         assertTrue(workflow.contains("testDebugUnitTest"))
@@ -29,6 +30,7 @@ class ReleaseEngineeringTest {
         assertTrue(workflow.contains("tags:"))
         assertTrue(workflow.contains("v*.*.*"))
         assertTrue(workflow.contains("permissions:\n  contents: write"))
+        assertTrue(workflow.contains("uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6\n        with:\n          lfs: true"))
         assertTrue(workflow.contains("assembleRelease"))
         assertTrue(workflow.contains("ANDROID_KEYSTORE_BASE64"))
         assertTrue(workflow.contains("ANDROID_KEYSTORE_PASSWORD"))
@@ -39,6 +41,49 @@ class ReleaseEngineeringTest {
         assertTrue(workflow.contains("gh release create"))
         assertFalse(workflow.contains("set -x"))
         assertFalse(FLOATING_ACTION_PATTERN.matcher(workflow).find())
+    }
+
+    @Test
+    fun `ci and release verify the pinned X480 source assets before building`() {
+        val expected = listOf(
+            "encoder-480ms.onnx" to ("592968361" to "0c3454033d249081df124ddcd7adaf3deca07d0b999b26f2ee5d2475d37abc74"),
+            "decoder-480ms.onnx" to ("11309084" to "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"),
+            "joiner-480ms.onnx" to ("10260467" to "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"),
+            "tokens.txt" to ("58806" to "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"),
+        )
+
+        listOf(".github/workflows/android-ci.yml", ".github/workflows/android-release.yml").forEach { path ->
+            val workflow = readRepositoryFile(path)
+            assertTrue(workflow.contains("Verify bundled X480 model assets"))
+            assertTrue(workflow.contains("app/src/main/assets/asr/x-asr-zh-en-480ms"))
+            assertTrue(workflow.contains("sha256sum"))
+            expected.forEach { (name, sizeAndHash) ->
+                assertTrue("$path is missing size for $name", workflow.contains(sizeAndHash.first))
+                assertTrue("$path is missing SHA-256 for $name", workflow.contains(sizeAndHash.second))
+            }
+            val buildMarker = if (path.endsWith("android-release.yml")) "assembleRelease" else "Build debug APK"
+            assertTrue(
+                "$path must verify model assets before building",
+                workflow.indexOf("Verify bundled X480 model assets") < workflow.indexOf(buildMarker),
+            )
+        }
+    }
+
+    @Test
+    fun `debug APK verification checks real X480 asset payloads rather than APK existence`() {
+        val workflow = readRepositoryFile(".github/workflows/android-ci.yml")
+
+        assertTrue(workflow.contains("Verify debug APK contains real X480 model assets"))
+        assertTrue(workflow.contains("unzip -p"))
+        assertTrue(workflow.contains("assets/asr/x-asr-zh-en-480ms/encoder-480ms.onnx"))
+        assertTrue(workflow.contains("assets/asr/x-asr-zh-en-480ms/decoder-480ms.onnx"))
+        assertTrue(workflow.contains("assets/asr/x-asr-zh-en-480ms/joiner-480ms.onnx"))
+        assertTrue(workflow.contains("assets/asr/x-asr-zh-en-480ms/tokens.txt"))
+        assertTrue(workflow.contains("wc -c"))
+        assertTrue(
+            workflow.indexOf("Verify debug APK contains real X480 model assets") >
+                workflow.indexOf("Build debug APK"),
+        )
     }
 
     @Test

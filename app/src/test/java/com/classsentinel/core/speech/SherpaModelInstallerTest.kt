@@ -5,6 +5,11 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -143,6 +148,56 @@ class SherpaModelInstallerTest {
             assertEquals(0, assetOpens)
             assertFalse(File(target, ModelIntegrityVerifier.MARKER_FILE_NAME).exists())
         } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `concurrent readiness callers share one installation for the same profile`() {
+        val root = Files.createTempDirectory("sherpa-installer-concurrent-").toFile()
+        val profile = testProfile()
+        val assetOpens = AtomicInteger()
+        val firstAssetOpened = CountDownLatch(1)
+        val releaseFirstAsset = CountDownLatch(1)
+        val assetOpener: (String) -> ByteArrayInputStream = { assetPath ->
+            if (assetOpens.incrementAndGet() == 1) {
+                firstAssetOpened.countDown()
+                check(releaseFirstAsset.await(5, TimeUnit.SECONDS)) { "test release timed out" }
+            }
+            ByteArrayInputStream(modelFiles.getValue(assetPath.substringAfterLast('/')))
+        }
+        val firstChecker = ModelReadinessChecker(
+            filesDir = root,
+            availableSpace = { Long.MAX_VALUE },
+        )
+        val secondChecker = ModelReadinessChecker(
+            filesDir = root,
+            availableSpace = { Long.MAX_VALUE },
+        )
+        val executor = Executors.newFixedThreadPool(2)
+
+        try {
+            val first = executor.submit<Boolean> {
+                runBlocking { firstChecker.ensureReady(profile, assetOpener) }
+            }
+            assertTrue(firstAssetOpened.await(5, TimeUnit.SECONDS))
+            val second = executor.submit<Boolean> {
+                runBlocking { secondChecker.ensureReady(profile, assetOpener) }
+            }
+            releaseFirstAsset.countDown()
+
+            assertTrue(first.get(5, TimeUnit.SECONDS))
+            assertTrue(second.get(5, TimeUnit.SECONDS))
+            assertEquals(4, assetOpens.get())
+            assertTrue(ModelIntegrityVerifier.isInstalled(root, profile))
+            assertTrue(
+                root.resolve("asr/${profile.artifact.directory}")
+                    .listFiles()
+                    ?.none { it.name.endsWith(".tmp") } == true,
+            )
+        } finally {
+            releaseFirstAsset.countDown()
+            executor.shutdownNow()
             root.deleteRecursively()
         }
     }

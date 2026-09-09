@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import kotlinx.coroutines.CancellationException
 
 /** Extra free space required while copying the large bundled production model. */
@@ -27,8 +29,19 @@ internal class SherpaModelInstaller(
         }
     }
 
-    @Synchronized
     fun install(): File {
+        val lock = INSTALL_LOCKS.computeIfAbsent(
+            InstallKey(filesDir.canonicalPath, profile.id, profile.version),
+        ) { ReentrantLock() }
+        lock.lock()
+        return try {
+            installInternal()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun installInternal(): File {
         val targetDir = ModelIntegrityVerifier.resolveTargetDirectory(filesDir, profile)
 
         if (!targetDir.exists() && !targetDir.mkdirs()) {
@@ -89,6 +102,12 @@ internal class SherpaModelInstaller(
         }
     }
 
+    private data class InstallKey(
+        val filesDir: String,
+        val profileId: String,
+        val profileVersion: String,
+    )
+
     private fun ensureStorageAvailable(targetDir: File) {
         val remainingBytes = profile.artifact.files.sumOf { spec ->
             if (ModelIntegrityVerifier.verifyFile(File(targetDir, spec.name), spec)) 0L else spec.expectedSize
@@ -125,6 +144,7 @@ internal class SherpaModelInstaller(
         internal fun isInstalled(filesDir: File, profile: ModelProfile): Boolean =
             ModelIntegrityVerifier.isInstalled(filesDir, profile)
 
+        private val INSTALL_LOCKS = ConcurrentHashMap<InstallKey, ReentrantLock>()
         private const val ASSET_ROOT = "asr"
         private const val COPY_BUFFER_SIZE = 64 * 1024
     }

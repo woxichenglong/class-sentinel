@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.classsentinel.core.speech.NameCalibrationController
 import com.classsentinel.core.speech.NameCalibrationFailure
+import com.classsentinel.core.speech.NameCalibrationPreparation
 import com.classsentinel.core.speech.NameVoiceCalibrator
 import com.classsentinel.ui.AI_NAME_VOICE_PRIVACY_NOTICE
 import kotlinx.coroutines.CancellationException
@@ -53,6 +54,13 @@ internal fun VoiceNameCalibrationScreen(
         if (!microphoneGranted && !permissionRequested) {
             permissionRequested = true
             onRequestMicrophone()
+        } else if (microphoneGranted && controller.state.preparation != NameCalibrationPreparation.READY) {
+            state = state.copy(
+                preparation = NameCalibrationPreparation.PREPARING,
+                prepareFailure = null,
+                lastFailure = null,
+            )
+            state = controller.prepare()
         }
     }
 
@@ -91,6 +99,42 @@ internal fun VoiceNameCalibrationScreen(
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("暂时跳过") }
+        } else if (state.preparation == NameCalibrationPreparation.PREPARING ||
+            state.preparation == NameCalibrationPreparation.NOT_STARTED
+        ) {
+            Spacer(Modifier.height(16.dp))
+            CircularProgressIndicator()
+            Text("正在准备 X-ASR 模型…", style = MaterialTheme.typography.bodySmall)
+        } else if (state.preparation == NameCalibrationPreparation.FAILED) {
+            Spacer(Modifier.height(12.dp))
+            state.prepareFailure?.let { failure ->
+                Text(
+                    nameCalibrationFailureMessage(failure),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    state = state.copy(
+                        preparation = NameCalibrationPreparation.PREPARING,
+                        prepareFailure = null,
+                        lastFailure = null,
+                    )
+                    scope.launch { state = controller.prepare() }
+                },
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("重试准备 X-ASR") }
+            TextButton(
+                onClick = {
+                    controller.skipAll()
+                    state = controller.state
+                    onFinished(controller.mergedVariants())
+                },
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("暂时跳过校准") }
         } else if (saving) {
             Spacer(Modifier.height(16.dp))
             CircularProgressIndicator()
@@ -173,6 +217,7 @@ private fun CalibrationAttemptRow(label: String, completed: Boolean) {
 
 private fun nameCalibrationFailureMessage(failure: NameCalibrationFailure): String = when (failure) {
     NameCalibrationFailure.INVALID_INPUT -> "姓名无效，请返回姓名页检查"
+    NameCalibrationFailure.PREPARE_REQUIRED -> "X-ASR 尚未准备好，请稍后重试"
     NameCalibrationFailure.MICROPHONE -> "麦克风暂不可用，可以重试或跳过"
     NameCalibrationFailure.MODEL_UNAVAILABLE -> "X-ASR 暂不可用，可以重试或跳过"
     NameCalibrationFailure.TIMEOUT -> "本次识别超时，可以重试"

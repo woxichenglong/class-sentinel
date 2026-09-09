@@ -85,4 +85,22 @@ class OnboardingStateTest {
         )
         assertTrue(second.onboardingCompletedFlow.first())
     }
+
+    @Test
+    fun `permissions page has no dead back navigation after name commit`() {
+        val source = readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/OnboardingScreen.kt")
+
+        assertFalse(source.contains("Text(\"上一步\")"))
+        assertFalse(source.contains("onBack ="))
+    }
+
+    private fun readRepositoryFile(relativePath: String): String {
+        var directory: File? = File(System.getProperty("user.dir") ?: ".")
+        while (directory != null) {
+            val file = File(directory, relativePath)
+            if (file.isFile) return file.readText()
+            directory = directory.parentFile
+        }
+        error("Repository file not found: $relativePath")
+    }
 }

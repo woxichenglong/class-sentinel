@@ -8,11 +8,19 @@ import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Onboarding 专用姓名语音采样边界；不进入课堂事件或转写持久化链。 */
 interface NameVoiceCalibrator {
+    suspend fun prepare(): NameCalibrationPrepareResult
     suspend fun captureOnce(expectedDisplayName: String): NameCalibrationAttempt
+}
+
+sealed interface NameCalibrationPrepareResult {
+    data object Ready : NameCalibrationPrepareResult
+    data class Failure(val reason: NameCalibrationFailure) : NameCalibrationPrepareResult
 }
 
 sealed interface NameCalibrationAttempt {
@@ -22,6 +30,7 @@ sealed interface NameCalibrationAttempt {
 
 enum class NameCalibrationFailure {
     INVALID_INPUT,
+    PREPARE_REQUIRED,
     MICROPHONE,
     MODEL_UNAVAILABLE,
     TIMEOUT,
@@ -39,7 +48,7 @@ internal interface NameCalibrationAudioCapture {
 
 /**
  * 一次短姓名 utterance 的 X480 实现。
- * readiness、AudioRecord、sherpa stream 都属于本次 attempt，finally 统一停止采集。
+ * readiness 在 prepare 阶段完成并缓存；AudioRecord、sherpa stream 属于本次 attempt，finally 统一停止采集。
  */
 internal class X480NameVoiceCalibrator(
     private val ensureReady: suspend () -> Boolean,
@@ -48,25 +57,40 @@ internal class X480NameVoiceCalibrator(
     private val engineFactory: (File) -> ProfileBoundStreamingSpeechEngine,
     private val attemptTimeoutMs: Long = DEFAULT_ATTEMPT_TIMEOUT_MS,
 ) : NameVoiceCalibrator {
+    private val prepareMutex = Mutex()
+    @Volatile
+    private var prepared = false
 
     init {
         require(attemptTimeoutMs > 0L) { "attempt timeout must be positive" }
+    }
+
+    override suspend fun prepare(): NameCalibrationPrepareResult {
+        if (prepared) return NameCalibrationPrepareResult.Ready
+        return prepareMutex.withLock {
+            if (prepared) return@withLock NameCalibrationPrepareResult.Ready
+            val result = try {
+                if (ensureReady()) {
+                    NameCalibrationPrepareResult.Ready
+                } else {
+                    NameCalibrationPrepareResult.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                NameCalibrationPrepareResult.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE)
+            }
+            if (result is NameCalibrationPrepareResult.Ready) prepared = true
+            result
+        }
     }
 
     override suspend fun captureOnce(expectedDisplayName: String): NameCalibrationAttempt {
         if (expectedDisplayName.trim().isBlank()) {
             return NameCalibrationAttempt.Failure(NameCalibrationFailure.INVALID_INPUT)
         }
-
-        val ready = try {
-            ensureReady()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            false
-        }
-        if (!ready) {
-            return NameCalibrationAttempt.Failure(NameCalibrationFailure.MODEL_UNAVAILABLE)
+        if (!prepared) {
+            return NameCalibrationAttempt.Failure(NameCalibrationFailure.PREPARE_REQUIRED)
         }
 
         val audio = try {
@@ -176,8 +200,42 @@ internal class NameCalibrationController(
     var state: NameCalibrationUiState = NameCalibrationUiState()
         private set
 
+    suspend fun prepare(): NameCalibrationUiState {
+        if (state.finished || state.preparation == NameCalibrationPreparation.READY ||
+            state.preparation == NameCalibrationPreparation.PREPARING
+        ) {
+            return state
+        }
+        state = state.copy(
+            preparation = NameCalibrationPreparation.PREPARING,
+            prepareFailure = null,
+            lastFailure = null,
+        )
+        state = try {
+            when (val result = calibrator.prepare()) {
+                NameCalibrationPrepareResult.Ready -> state.copy(
+                    preparation = NameCalibrationPreparation.READY,
+                    prepareFailure = null,
+                )
+                is NameCalibrationPrepareResult.Failure -> state.copy(
+                    preparation = NameCalibrationPreparation.FAILED,
+                    prepareFailure = result.reason,
+                )
+            }
+        } catch (error: CancellationException) {
+            state = state.copy(preparation = NameCalibrationPreparation.NOT_STARTED)
+            throw error
+        } catch (_: Exception) {
+            state.copy(
+                preparation = NameCalibrationPreparation.FAILED,
+                prepareFailure = NameCalibrationFailure.UNKNOWN,
+            )
+        }
+        return state
+    }
+
     suspend fun captureNext(): NameCalibrationUiState {
-        if (state.finished || state.isListening) return state
+        if (state.finished || state.isListening || state.preparation != NameCalibrationPreparation.READY) return state
         state = state.copy(isListening = true, lastFailure = null)
         state = try {
             when (val attempt = calibrator.captureOnce(displayName)) {
@@ -249,9 +307,18 @@ internal class NameCalibrationController(
 }
 
 data class NameCalibrationUiState(
+    val preparation: NameCalibrationPreparation = NameCalibrationPreparation.NOT_STARTED,
+    val prepareFailure: NameCalibrationFailure? = null,
     val completedSlots: Int = 0,
     val measuredTranscripts: List<String> = emptyList(),
     val isListening: Boolean = false,
     val lastFailure: NameCalibrationFailure? = null,
     val finished: Boolean = false,
 )
+
+enum class NameCalibrationPreparation {
+    NOT_STARTED,
+    PREPARING,
+    READY,
+    FAILED,
+}

@@ -18,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,8 +43,8 @@ import com.classsentinel.core.llm.AiConnectivityChecker
 import com.classsentinel.core.llm.LlmNameVariantGenerator
 import com.classsentinel.core.llm.LlmAiConnectivityChecker
 import com.classsentinel.core.llm.NameVariantGenerator
-import com.classsentinel.core.llm.NameVariantSanitizer
 import com.classsentinel.core.speech.NameVoiceCalibrator
+import com.classsentinel.core.speech.NameVariantMergePolicy
 import com.classsentinel.core.speech.X480NameVoiceCalibrator
 import com.classsentinel.data.AiSettings
 import com.classsentinel.data.SettingsRepository
@@ -138,7 +137,7 @@ fun OnboardingScreen(
         scope.launch {
             try {
                 val finalEntry = pending.copy(
-                    asrVariants = NameVariantSanitizer.sanitize(pending.display, variants),
+                    asrVariants = NameVariantMergePolicy.sanitizeMergedVariants(pending.display, variants),
                 )
                 settings.saveNameList(
                     listOf(finalEntry),
@@ -238,7 +237,6 @@ fun OnboardingScreen(
                             notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         },
                         onDone = onDone,
-                        onBack = { step = OnboardingStep.NameConfig },
                     )
                 }
             }
@@ -472,7 +470,6 @@ private fun StepPermissions(
     onRequestAudio: () -> Unit,
     onRequestNotify: () -> Unit,
     onDone: () -> Unit,
-    onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -506,8 +503,6 @@ private fun StepPermissions(
         enabled = audioGranted && notifyGranted,
         modifier = Modifier.fillMaxWidth(),
     ) { Text("完成设置") }
-    Spacer(Modifier.height(8.dp))
-    ElevatedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("上一步") }
 }
 
 @Composable

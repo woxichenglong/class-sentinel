@@ -49,15 +49,36 @@ class AiSetupStateTest {
 
     @Test
     fun `connectivity failure becomes Failed and skip still opens NameConfig`() = runTest {
+        var saved: AiSettings? = null
         val state = saveAndCheckAi(
             draft = completeSettings,
-            save = {},
+            save = { saved = it },
             checker = FakeChecker(AiConnectivityResult.Failure(AiSetupFailure.NETWORK)),
         )
 
         assertEquals(AiSetupState.Failed(AiSetupFailure.NETWORK), state)
+        assertNull(saved)
         assertTrue(canSkipAi(state))
         assertEquals(OnboardingStep.NameConfig, nextStepAfterAiSetup(state, skipped = true))
+    }
+
+    @Test
+    fun `failed replacement draft preserves the previously saved AI configuration`() = runTest {
+        var persisted = completeSettings
+        val replacement = AiSettings(
+            baseUrl = "https://replacement.example.test/v1",
+            apiKey = "replacement-test-key",
+            model = "replacement-model",
+        )
+
+        val state = saveAndCheckAi(
+            draft = replacement,
+            save = { persisted = it },
+            checker = FakeChecker(AiConnectivityResult.Failure(AiSetupFailure.AUTH)),
+        )
+
+        assertEquals(AiSetupState.Failed(AiSetupFailure.AUTH), state)
+        assertEquals(completeSettings, persisted)
     }
 
     @Test
