@@ -125,6 +125,12 @@ class EventEngine(
         // Use only the current final for event classification. The rolling window is context for
         // the persisted event/answer, not evidence that an old name targets this new sentence.
         val question = QuestionDetector.detectAnswerable(final.text, sens.questionWordLevel)
+        val questionText = question?.let {
+            QuestionSpanAssembler.assemble(
+                current = final,
+                previous = window.entries.dropLast(1).lastOrNull(),
+            )
+        }
         val canonicalTargetName = personalizedTarget
             ?.takeIf { it.confidence == NameTargetConfidence.CONFIRMED }
             ?.targetName
@@ -150,7 +156,7 @@ class EventEngine(
             if (canEmitQuestion(EventScope.DIRECT, final.text, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
-                    triggerText = final.text,
+                    triggerText = questionText!!,
                     context = combined,
                     ts = ts,
                     scope = EventScope.DIRECT,
@@ -196,7 +202,7 @@ class EventEngine(
             if (canEmitQuestion(EventScope.CLASS_OPEN, final.text, ts, sens.questionSuppressMs)) {
                 return ClassEvent(
                     type = EventType.QUESTION,
-                    triggerText = final.text,
+                    triggerText = questionText!!,
                     context = combined,
                     ts = ts,
                     scope = EventScope.CLASS_OPEN,

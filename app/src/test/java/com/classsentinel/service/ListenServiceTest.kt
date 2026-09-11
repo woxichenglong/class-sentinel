@@ -2,7 +2,9 @@ package com.classsentinel.service
 
 import android.app.Service
 import android.content.Intent
+import com.classsentinel.core.llm.AnswerRequest
 import com.classsentinel.core.pipeline.PipelineState
+import com.classsentinel.data.entities.EventEntity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runCurrent
@@ -125,5 +127,29 @@ class ListenServiceTest {
 
         assertEquals(Service.START_NOT_STICKY, result)
         assertEquals(emptyList<String>(), events)
+    }
+
+    @Test
+    fun `retry answer request reuses the assembled question persisted in the event`() {
+        val assembled = "what is the difference between machine learning and deep learning，请你解释一下。"
+        val persisted = EventEntity(
+            id = 17L,
+            courseId = 1L,
+            type = "QUESTION",
+            triggerText = assembled,
+            contextText = "课堂上下文",
+            notifiedAt = 2_000L,
+            ts = 2_000L,
+        )
+
+        val retryEvent = persisted.toRetryQuestionEvent()
+        val request = AnswerRequest(
+            eventId = persisted.id,
+            question = retryEvent.triggerText,
+            context = retryEvent.context,
+        )
+
+        assertEquals(persisted.triggerText, request.question)
+        assertEquals(persisted.contextText, request.context)
     }
 }

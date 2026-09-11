@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-09-06T11:26:33Z",
-  "updated_at": "2026-09-09T05:56:24Z",
+  "updated_at": "2026-09-11T10:55:21Z",
   "files": {
     ".gitattributes": {
       "sha256": "59431bc2819468fc611ecace14b986620ea25b183d12498f7f75aafac0306062",
@@ -64,9 +64,9 @@
       "normalized_sha256": "63f519e15726f4c4f830bd958f694c84fecb4e0a4cacc527d2696bb71ef95ada"
     },
     "aoci.code.txt": {
-      "sha256": "ff03fcf3a476e46662f5dc663fe43bae10b3d8d3bed30da0b9ff701d7990159b",
-      "size": 116402,
-      "normalized_sha256": "ff03fcf3a476e46662f5dc663fe43bae10b3d8d3bed30da0b9ff701d7990159b"
+      "sha256": "4c78770e5277a698d38a62f708194d8a14b50d41d14f7f3c87db7b668412171d",
+      "size": 120010,
+      "normalized_sha256": "4c78770e5277a698d38a62f708194d8a14b50d41d14f7f3c87db7b668412171d"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -236,9 +236,9 @@
       "normalized_sha256": "4146dac028f555ddb994c956e3ba045c0266b74f30100812a09d26a0beada5df"
     },
     "app/src/main/java/com/classsentinel/core/detect/EventEngine.kt": {
-      "sha256": "1e6d23a3652312942098f7e52cb48e8046b80ede66b6c6cc5fd24123ace4609b",
-      "size": 9804,
-      "normalized_sha256": "1e6d23a3652312942098f7e52cb48e8046b80ede66b6c6cc5fd24123ace4609b"
+      "sha256": "e867b22eb922f4ef9ba35b2bf0e0dc589d60ddfa3d43f87cfbc12896feee4663",
+      "size": 10024,
+      "normalized_sha256": "e867b22eb922f4ef9ba35b2bf0e0dc589d60ddfa3d43f87cfbc12896feee4663"
     },
     "app/src/main/java/com/classsentinel/core/detect/FinalTranscriptWindow.kt": {
       "sha256": "a20804b4f75e338bbec9f06d12eea10aff86b35fc1dda3dd46a0bb9bd4e0e058",
@@ -269,6 +269,11 @@
       "sha256": "4afbebe17227ef3fbf284aa07b677910706cc4b092cb8aee5daf938321f7e576",
       "size": 3931,
       "normalized_sha256": "4afbebe17227ef3fbf284aa07b677910706cc4b092cb8aee5daf938321f7e576"
+    },
+    "app/src/main/java/com/classsentinel/core/detect/QuestionSpanAssembler.kt": {
+      "sha256": "dc6d06c9c84d29ee879a2bf7860aed6daa6b6f0f8d2cebcccb415976ecebe30b",
+      "size": 1268,
+      "normalized_sha256": "dc6d06c9c84d29ee879a2bf7860aed6daa6b6f0f8d2cebcccb415976ecebe30b"
     },
     "app/src/main/java/com/classsentinel/core/detect/QuestionTargetMatcher.kt": {
       "sha256": "2d58d875b8a2a2c8b18ecc7b50654ddc924d38f3afd33b2a18e23285ef29b5b6",
@@ -666,9 +671,9 @@
       "normalized_sha256": "9f053cb205c9699dec8f4fa9f68869382b95c15cabc260114c166984d78e581c"
     },
     "app/src/main/java/com/classsentinel/service/ListenService.kt": {
-      "sha256": "8739875306b8958726fbb35071206a51e24171bf7728d65add53f5ef7c8eb4e7",
-      "size": 15419,
-      "normalized_sha256": "8739875306b8958726fbb35071206a51e24171bf7728d65add53f5ef7c8eb4e7"
+      "sha256": "1aa43483cafc7d812c395b82bd7249f8c867696cb5adb448f319cb2081fbb6d6",
+      "size": 15380,
+      "normalized_sha256": "1aa43483cafc7d812c395b82bd7249f8c867696cb5adb448f319cb2081fbb6d6"
     },
     "app/src/main/java/com/classsentinel/service/ListenServiceHandleFactory.kt": {
       "sha256": "bc93f3aa15ce6a3a80b44a19e7365e28171c7ec9f4bcb261eb9cf86466804a7f",
@@ -745,10 +750,15 @@
       "size": 10016,
       "normalized_sha256": "4b309c11b121fd170173e3da5a1bcfb6ebdf9e062ca9900d144c06e0ba89d10c"
     },
+    "app/src/main/java/com/classsentinel/ui/screens/LivePrimaryAction.kt": {
+      "sha256": "91a9a710b69dda7fd40d245274f956a0f8e4068bd6e7aa07df7046d9b5378196",
+      "size": 1170,
+      "normalized_sha256": "91a9a710b69dda7fd40d245274f956a0f8e4068bd6e7aa07df7046d9b5378196"
+    },
     "app/src/main/java/com/classsentinel/ui/screens/LiveScreen.kt": {
-      "sha256": "115b3ebe09f35a8d2a689a5f559c156586fb8d0c1661df398ff769c6e9199430",
-      "size": 7273,
-      "normalized_sha256": "115b3ebe09f35a8d2a689a5f559c156586fb8d0c1661df398ff769c6e9199430"
+      "sha256": "1098e26b654e1e8a05b7de87dc1a04ae32d1f84f5979ac346800daf0f3417356",
+      "size": 7479,
+      "normalized_sha256": "1098e26b654e1e8a05b7de87dc1a04ae32d1f84f5979ac346800daf0f3417356"
     },
     "app/src/main/java/com/classsentinel/ui/screens/LocalAsrModelUiState.kt": {
       "sha256": "3b0de21f482ffe47cf9f5e4c04895744da80a12ff0f962d1e15debfee5f43773",
@@ -911,9 +921,9 @@
       "normalized_sha256": "191e932f88a7d23db60303ae060d7e3c896e962aaeb0e00644899993199c3519"
     },
     "app/src/test/java/com/classsentinel/core/detect/EventEngineTest.kt": {
-      "sha256": "2ab896c9fffcc5396b15d30aeb24ea8d9f0970c418c8683253ad8db166b61817",
-      "size": 15991,
-      "normalized_sha256": "2ab896c9fffcc5396b15d30aeb24ea8d9f0970c418c8683253ad8db166b61817"
+      "sha256": "5aec9fa591f668bfd04cc800d504ac4b201dfdc7c8264c88f60d8f1bbaa2b341",
+      "size": 18604,
+      "normalized_sha256": "5aec9fa591f668bfd04cc800d504ac4b201dfdc7c8264c88f60d8f1bbaa2b341"
     },
     "app/src/test/java/com/classsentinel/core/detect/FinalTranscriptWindowTest.kt": {
       "sha256": "f317d95d77487ca7a5c28091d0b841a87663e485231c29a834337d0988767297",
@@ -939,6 +949,11 @@
       "sha256": "6d4a0c40f3268332a88b900ef170567765fab5427a47d57f945c88cfc5076f35",
       "size": 4879,
       "normalized_sha256": "6d4a0c40f3268332a88b900ef170567765fab5427a47d57f945c88cfc5076f35"
+    },
+    "app/src/test/java/com/classsentinel/core/detect/QuestionSpanAssemblerTest.kt": {
+      "sha256": "1d7bc2c8935470e0b4bbc171f7f3d4407da444ec4172a53aa5071245a85e52ea",
+      "size": 2810,
+      "normalized_sha256": "1d7bc2c8935470e0b4bbc171f7f3d4407da444ec4172a53aa5071245a85e52ea"
     },
     "app/src/test/java/com/classsentinel/core/evaluation/UnifiedAsrScoreCsvTest.kt": {
       "sha256": "3f94c5706e5fb6e05684a7ad16968bd330ce1c8049f695d3f8946d40c5f43c4e",
@@ -1326,9 +1341,9 @@
       "normalized_sha256": "b7594019e6f0f8130edb3f75552ef147fa3c0ee9ae465c4b9b28004901d2fa39"
     },
     "app/src/test/java/com/classsentinel/service/ListenServiceTest.kt": {
-      "sha256": "ea073fd09bd8b189e5b9dd94b6d7894cf1c14fa09fb07f49685474f0e3962682",
-      "size": 4525,
-      "normalized_sha256": "ea073fd09bd8b189e5b9dd94b6d7894cf1c14fa09fb07f49685474f0e3962682"
+      "sha256": "135389a76470e950d4c3627f2f88d35c8a0b3eccd0c95d293481aa3384e8f8cf",
+      "size": 5467,
+      "normalized_sha256": "135389a76470e950d4c3627f2f88d35c8a0b3eccd0c95d293481aa3384e8f8cf"
     },
     "app/src/test/java/com/classsentinel/service/ListenSessionControllerTest.kt": {
       "sha256": "85716b3cfebf770f2cd7b251a3f469ef9d102f4f6b12d42f7f6a30e25d7d27d7",
@@ -1366,9 +1381,9 @@
       "normalized_sha256": "d471a139948854d9bb1e298f7594793fdb520180a6c38822c75484776842a4e3"
     },
     "app/src/test/java/com/classsentinel/service/SessionPipelineAdapterTest.kt": {
-      "sha256": "08acd5854f98e82063781a8ad5de1ab72bc11eb22c040563ea1eb093bfae65ff",
-      "size": 11495,
-      "normalized_sha256": "08acd5854f98e82063781a8ad5de1ab72bc11eb22c040563ea1eb093bfae65ff"
+      "sha256": "5fceb135b1b9222da6a3355c1987144681c27da854c72bfd594bb09d29917092",
+      "size": 13869,
+      "normalized_sha256": "5fceb135b1b9222da6a3355c1987144681c27da854c72bfd594bb09d29917092"
     },
     "app/src/test/java/com/classsentinel/tile/ListenTileStateTest.kt": {
       "sha256": "55be204ca93b9491c3138d115d0aa80f503890ccc309142d5686cf0617c49e0e",
@@ -1429,6 +1444,11 @@
       "sha256": "94ca09a40f12ced5ddb3916cfa5b5c94b5f68db0d739cb12e4161936c095a614",
       "size": 1003,
       "normalized_sha256": "94ca09a40f12ced5ddb3916cfa5b5c94b5f68db0d739cb12e4161936c095a614"
+    },
+    "app/src/test/java/com/classsentinel/ui/screens/LivePrimaryActionTest.kt": {
+      "sha256": "18a8cffcde08a5afdbc824277c11b5d64009c769fc1540ba55631e71b906e803",
+      "size": 1558,
+      "normalized_sha256": "18a8cffcde08a5afdbc824277c11b5d64009c769fc1540ba55631e71b906e803"
     },
     "app/src/test/java/com/classsentinel/ui/screens/LiveScreenStateTest.kt": {
       "sha256": "8a8cedc597013f25ea721e15200d0a8c5919d333b496550aadcd65cbdaa0e436",

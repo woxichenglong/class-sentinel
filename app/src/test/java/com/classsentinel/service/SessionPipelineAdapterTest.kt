@@ -11,6 +11,8 @@ import com.classsentinel.core.detect.EventEngine
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.NameMatcher
 import com.classsentinel.core.detect.Sensitivity
+import com.classsentinel.core.llm.AnswerRequest
+import com.classsentinel.core.llm.AnswerResult
 import com.classsentinel.core.pipeline.StreamingListenPipeline
 import com.classsentinel.core.speech.StreamingAsrEvent
 import com.classsentinel.core.speech.StreamingSpeechEngine
@@ -251,6 +253,69 @@ class SessionPipelineAdapterTest {
         assertEquals(1, transcriptWrites)
         assertEquals(1, eventWrites)
         assertEquals(1, alerts.fired)
+        coordinator.close()
+    }
+
+    @Test
+    fun `assembled question is persisted and reused by the answer request and live state`() = runTest {
+        val alerts = RecordingChannel()
+        val coordinator = coordinator(this, alerts)
+        var persisted: EventEntity? = null
+        var answerRequest: AnswerRequest? = null
+        val adapter = adapter(
+            scope = this,
+            alert = coordinator,
+            onQuestion = { event, eventId ->
+                answerRequest = AnswerRequest(
+                    eventId = eventId,
+                    question = event.triggerText,
+                    context = event.context,
+                    requestKey = "event:${eventId ?: 0L}",
+                )
+            },
+            insertTranscript = { 1L },
+            insertEvent = { event ->
+                persisted = event
+                7L
+            },
+        )
+
+        adapter.processSegment(
+            courseId = 1L,
+            final = StreamingAsrEvent.Final(
+                1,
+                "比如老师问 what is the difference between machine learning and deep learn",
+                0L,
+                1_000L,
+            ),
+            earlyAlerted = false,
+        )
+        adapter.processSegment(
+            courseId = 1L,
+            final = StreamingAsrEvent.Final(
+                2,
+                "ing，请你用自己的话解释一下。",
+                1_500L,
+                2_000L,
+            ),
+            earlyAlerted = false,
+        )
+
+        val persistedEvent = checkNotNull(persisted)
+        val request = checkNotNull(answerRequest)
+        val expected = "比如老师问 what is the difference between machine learning and deep learning，请你用自己的话解释一下。"
+        assertEquals(expected, persistedEvent.triggerText)
+        assertEquals(persistedEvent.triggerText, request.question)
+        assertEquals(persistedEvent.contextText, request.context)
+
+        LiveStreamBus.pushAnswer(
+            eventId = request.eventId,
+            question = request.question,
+            context = request.context,
+            timestampMs = 2_000L,
+            result = AnswerResult.Failed("CONFIG"),
+        )
+        assertEquals(expected, LiveStreamBus.latestAnswer.value?.question)
         coordinator.close()
     }
 

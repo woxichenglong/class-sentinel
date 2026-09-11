@@ -27,6 +27,7 @@ import com.classsentinel.core.llm.answerFailureMessage
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.data.AppDatabase
 import com.classsentinel.data.SettingsRepositoryHolder
+import com.classsentinel.data.entities.EventEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
+
+/** Rebuilds the retry event from the exact QUESTION payload already persisted in Room. */
+internal fun EventEntity.toRetryQuestionEvent(): ClassEvent = ClassEvent(
+    type = EventType.QUESTION,
+    triggerText = triggerText,
+    context = contextText,
+    ts = ts,
+)
 
 /**
  * 听讲前台服务：常驻通知「正在听讲」，麦克风采集 → 本地 sherpa-onnx 连续 ASR
@@ -123,15 +132,7 @@ class ListenService : Service() {
                             AppDatabase.get(applicationContext).eventDao().getQuestionById(eventId)
                         }
                         if (event != null) {
-                            launchAnswer(
-                                ClassEvent(
-                                    type = EventType.QUESTION,
-                                    triggerText = event.triggerText,
-                                    context = event.contextText,
-                                    ts = event.ts,
-                                ),
-                                event.id,
-                            )
+                            launchAnswer(event.toRetryQuestionEvent(), event.id)
                         }
                     }
                 }

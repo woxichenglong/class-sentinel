@@ -68,6 +68,7 @@ fun LiveScreen() {
     val latestAnswer by LiveStreamBus.latestAnswer.collectAsState()
     val pipelineState by LiveStreamBus.pipelineState.collectAsState()
     val historyDegraded by LiveStreamBus.historyDegraded.collectAsState()
+    val primaryAction = livePrimaryActionUi(pipelineState)
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(
@@ -87,7 +88,12 @@ fun LiveScreen() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-            Button(onClick = { ListenService.stop(context) }) { Text("停止") }
+            Button(
+                onClick = { performLivePrimaryAction(context, primaryAction.action) },
+                enabled = primaryAction.enabled,
+            ) {
+                Text(primaryAction.label)
+            }
         }
 
         historyPersistenceWarning(historyDegraded)?.let { warning ->

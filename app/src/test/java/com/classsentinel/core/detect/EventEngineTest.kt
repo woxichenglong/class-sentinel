@@ -432,7 +432,7 @@ class EventEngineTest {
         assertNotNull(event)
         assertEquals(EventType.QUESTION, event?.type)
         assertEquals(EventScope.DIRECT, event?.scope)
-        assertEquals("你来回答这个问题", event?.triggerText)
+        assertEquals("张伟你来回答这个问题", event?.triggerText)
         assertEquals("张伟\n你来回答这个问题", event?.context)
         assertNull(
             eng.processFinal(
@@ -481,5 +481,78 @@ class EventEngineTest {
         assertNotNull(event)
         assertEquals(EventScope.CLASS_OPEN, event?.scope)
         assertEquals("为什么价格上涨", event?.context)
+    }
+
+    @Test
+    fun `current final decides question classification while payload spans the previous final`() {
+        val eng = engine()
+        val previous = FinalTranscript(
+            1,
+            "比如老师问 what is the difference between machine learning and deep learn",
+            0L,
+            1_000L,
+        )
+        val current = FinalTranscript(
+            2,
+            "ing，请你用自己的话解释一下。",
+            1_500L,
+            2_000L,
+        )
+
+        assertNull(eng.processFinal(previous, ts = 1_000L))
+        val event = eng.processFinal(current, ts = 2_000L)
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals(EventScope.DIRECT, event?.scope)
+        assertEquals(
+            "比如老师问 what is the difference between machine learning and deep learning，请你用自己的话解释一下。",
+            event?.triggerText,
+        )
+        assertEquals("${previous.text}\n${current.text}", event?.context)
+    }
+
+    @Test
+    fun `previous question does not upgrade a non-question current final`() {
+        val eng = engine()
+
+        assertNotNull(
+            eng.processFinal(FinalTranscript(1, "为什么会这样", 0L, 1_000L), ts = 1_000L),
+        )
+        assertNull(
+            eng.processFinal(
+                FinalTranscript(2, "接下来我们继续上课", 1_500L, 2_000L),
+                ts = 2_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `question payload uses only the immediately previous final`() {
+        val eng = engine()
+        val older = FinalTranscript(1, "更早的课堂铺垫", 0L, 500L)
+        val previous = FinalTranscript(2, "上一句", 600L, 1_000L)
+        val current = FinalTranscript(3, "请你解释", 1_500L, 2_000L)
+
+        assertNull(eng.processFinal(older, ts = 500L))
+        assertNull(eng.processFinal(previous, ts = 1_000L))
+        val event = eng.processFinal(current, ts = 2_000L)
+
+        assertEquals(EventType.QUESTION, event?.type)
+        assertEquals("上一句请你解释", event?.triggerText)
+        assertTrue(older.text !in event!!.triggerText)
+    }
+
+    @Test
+    fun `rollcall trigger remains the current final when a previous final exists`() {
+        val eng = engine()
+
+        eng.processFinal(FinalTranscript(1, "前一句", 0L, 1_000L), ts = 1_000L)
+        val event = eng.processFinal(
+            FinalTranscript(2, "张伟，你来一下", 1_500L, 2_000L),
+            ts = 2_000L,
+        )
+
+        assertEquals(EventType.ROLLCALL, event?.type)
+        assertEquals("张伟，你来一下", event?.triggerText)
     }
 }
