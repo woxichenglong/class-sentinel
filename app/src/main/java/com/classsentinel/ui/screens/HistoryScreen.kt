@@ -5,16 +5,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,11 +21,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.classsentinel.data.AnswerCard
 import com.classsentinel.data.AnswerHistoryRepository
 import com.classsentinel.data.AppDatabase
+import com.classsentinel.ui.components.AuroraCard
+import com.classsentinel.ui.components.ScreenHeader
+import com.classsentinel.ui.components.StatusPill
+import com.classsentinel.ui.theme.ClassSentinelSpacing
 
 /** Student-facing history: answer cards grouped by local calendar date. */
 @Composable
@@ -53,19 +51,19 @@ fun HistoryScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(
+            horizontal = ClassSentinelSpacing.lg,
+            vertical = ClassSentinelSpacing.xl,
+        ),
+        verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.sm),
     ) {
         item {
-            Column {
-                Text("问答历史", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "按日期回看课堂中真正触发的问答，依据可展开查看。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            ScreenHeader(
+                eyebrow = "HISTORY",
+                title = "问答历史",
+                description = "按日期回看课堂中真正触发的问答，依据默认收起。",
+                modifier = Modifier.padding(bottom = ClassSentinelSpacing.sm),
+            )
         }
         groups.forEach { group ->
             item(key = "date-${group.date}") {
@@ -73,7 +71,7 @@ fun HistoryScreen(
                     text = group.date,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = ClassSentinelSpacing.sm),
                 )
             }
             items(group.cards, key = { it.eventId }) { card ->
@@ -90,16 +88,22 @@ fun HistoryScreen(
 @Composable
 private fun EmptyAnswerHistory() {
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(ClassSentinelSpacing.xl),
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("暂无问答历史", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "开始一次课堂监听并识别到可回答的问题后，问答会按日期显示在这里。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        AuroraCard {
+            Column(
+                modifier = Modifier.padding(ClassSentinelSpacing.xl),
+                verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.sm),
+            ) {
+                Text("暂无问答历史", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "开始一次课堂监听并识别到可回答的问题后，问答会按日期显示在这里。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
@@ -111,29 +115,35 @@ private fun AnswerHistoryCard(
 ) {
     var expanded by rememberSaveable(card.eventId) { mutableStateOf(false) }
     val presentation = answerCardPresentation(card, expanded = expanded)
+    val hasAnswer = card.answer?.isNotBlank() == true
 
-    Card(
+    AuroraCard(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(ClassSentinelSpacing.lg),
+            verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.sm),
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("问题", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                StatusPill(
+                    label = if (hasAnswer) "已回答" else "待重试",
+                    active = hasAnswer,
+                )
+            }
+            Text(presentation.question, style = MaterialTheme.typography.bodyLarge)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("答案", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Text(
                     presentation.time,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(presentation.question, style = MaterialTheme.typography.bodyLarge)
-            Text("答案", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Text(presentation.answer, style = MaterialTheme.typography.bodyLarge)
             Text(
-                "依据：${presentation.context.ifBlank { "无" }}",
+                "课堂依据：${presentation.context.ifBlank { "无" }}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

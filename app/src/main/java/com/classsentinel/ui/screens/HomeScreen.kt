@@ -14,14 +14,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -40,14 +37,18 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.config.AppConfig
 import com.classsentinel.core.pipeline.PipelineState
-import com.classsentinel.core.speech.LocalListenStartPreflight
-import com.classsentinel.core.speech.ModelReadinessChecker
-import com.classsentinel.core.speech.ModelProfiles
 import com.classsentinel.core.speech.ASR_MODEL_STORAGE_INSUFFICIENT
+import com.classsentinel.core.speech.LocalListenStartPreflight
+import com.classsentinel.core.speech.ModelProfiles
+import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.SherpaModelInstaller
 import com.classsentinel.service.ListenService
 import com.classsentinel.service.LiveStreamBus
+import com.classsentinel.ui.components.AuroraCard
+import com.classsentinel.ui.components.ScreenHeader
+import com.classsentinel.ui.components.StatusPill
 import com.classsentinel.ui.isSessionActive
+import com.classsentinel.ui.theme.ClassSentinelSpacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
@@ -75,7 +76,7 @@ internal fun localAsrModelReady(
     return SherpaModelInstaller.isInstalled(filesDir, ModelProfiles.PRODUCTION)
 }
 
-/** Student home: one-tap listening, identity, and local model readiness. */
+/** Home keeps the one-tap listening contract, but gives the listening decision visual priority. */
 @Composable
 fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val context = LocalContext.current
@@ -112,9 +113,7 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
             preparingModel = true
             preparationScope.launch {
                 try {
-                    val prepared = localListenPreflight.ensureReady(
-                        profile = ModelProfiles.PRODUCTION,
-                    )
+                    val prepared = localListenPreflight.ensureReady(profile = ModelProfiles.PRODUCTION)
                     modelReady = prepared
                     preparingModel = false
                     if (prepared) {
@@ -151,75 +150,125 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = ClassSentinelSpacing.lg, vertical = ClassSentinelSpacing.xl),
+        verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.md),
     ) {
-        Text("课堂哨兵", style = MaterialTheme.typography.headlineLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "上课时点一次开始监听，停止后可按日期回看问答。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        ScreenHeader(
+            eyebrow = "CLASS SENTINEL",
+            title = "课堂哨兵",
+            description = "安静地听，清楚地回看。先确认监听状态，再把注意力交还给课堂。",
         )
-        Spacer(Modifier.height(24.dp))
 
-        Button(
-            onClick = ::toggleListening,
-            enabled = !preparingModel,
-            modifier = Modifier.fillMaxWidth().height(104.dp),
-            shape = RoundedCornerShape(20.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+        AuroraCard(
+            containerColor = if (listening) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.Mic, contentDescription = null)
-                Spacer(Modifier.height(6.dp))
+            Column(
+                modifier = Modifier.padding(ClassSentinelSpacing.xl),
+                verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.md),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("监听状态", style = MaterialTheme.typography.titleMedium)
+                    StatusPill(
+                        label = when {
+                            listening -> "正在监听"
+                            pipelineState is PipelineState.Error -> "需要处理"
+                            else -> "未在监听"
+                        },
+                        active = listening,
+                    )
+                }
                 Text(
-                    when {
-                        listening -> "停止监听"
-                        preparingModel -> "准备模型…"
-                        else -> "开始监听"
+                    homeStateText(pipelineState),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = if (listening) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
                     },
-                    style = MaterialTheme.typography.titleLarge,
+                )
+                historyPersistenceWarning(historyDegraded)?.let { warning ->
+                    Text(
+                        warning,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Button(
+                    onClick = ::toggleListening,
+                    enabled = !preparingModel,
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                ) {
+                    Text(
+                        when {
+                            listening -> "停止监听"
+                            preparingModel -> "准备模型…"
+                            else -> "开始监听"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+        }
+
+        AuroraCard {
+            Column(
+                modifier = Modifier.padding(ClassSentinelSpacing.lg),
+                verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.md),
+            ) {
+                Text("本节准备情况", style = MaterialTheme.typography.titleMedium)
+                HomeInfoRow("姓名 / 称呼", names.firstOrNull()?.display ?: "未设置")
+                HomeInfoRow(
+                    "本地转写模型",
+                    when (modelReady) {
+                        true -> "已就绪"
+                        false -> "未准备"
+                        null -> "检查中…"
+                    },
+                )
+                Text(
+                    ModelProfiles.PRODUCTION.displayName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text("当前状态", style = MaterialTheme.typography.titleMedium)
-                Text(homeStateText(pipelineState), style = MaterialTheme.typography.bodyLarge)
-                historyPersistenceWarning(historyDegraded)?.let { warning ->
-                    Text(
-                        warning,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("姓名/称呼", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(names.firstOrNull()?.display ?: "未设置")
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("本地转写模型", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        when (modelReady) {
-                            true -> "已就绪"
-                            false -> "未准备"
-                            null -> "检查中…"
-                        },
-                    )
-                }
-                Text(ModelProfiles.PRODUCTION.displayName, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onOpenLive, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = onOpenLive,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = MaterialTheme.shapes.medium,
+        ) {
             Text("查看实时转写")
+            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+            androidx.compose.material3.Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
         }
+    }
+}
+
+@Composable
+private fun HomeInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.labelLarge)
     }
 }

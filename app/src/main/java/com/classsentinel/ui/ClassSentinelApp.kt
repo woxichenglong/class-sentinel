@@ -10,8 +10,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -21,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -34,6 +37,8 @@ import com.classsentinel.ui.screens.HomeScreen
 import com.classsentinel.ui.screens.LiveScreen
 import com.classsentinel.ui.screens.OnboardingScreen
 import com.classsentinel.ui.screens.SettingsScreen
+import com.classsentinel.ui.screens.SettingsHubScreen
+import com.classsentinel.ui.theme.ClassSentinelSpacing
 import kotlinx.coroutines.flow.combine
 
 private data class BottomTab(val route: String, val label: String, val icon: @Composable () -> Unit)
@@ -61,11 +66,15 @@ fun ClassSentinelApp(initialEventId: Long? = null) {
     )
 
     Scaffold(
+        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
         bottomBar = {
             val backStack by navController.currentBackStackEntryAsState()
             val current = backStack?.destination
             if (onboardingCompleted != null && isBottomBarRoute(current?.route)) {
-                NavigationBar {
+                NavigationBar(
+                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
+                ) {
                     tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = current?.hierarchy?.any { it.route == tab.route } == true,
@@ -78,6 +87,13 @@ fun ClassSentinelApp(initialEventId: Long? = null) {
                             },
                             icon = tab.icon,
                             label = { Text(tab.label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedTextColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                                indicatorColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
                         )
                     }
                 }
@@ -86,10 +102,24 @@ fun ClassSentinelApp(initialEventId: Long? = null) {
     ) { padding ->
         if (onboardingCompleted == null) {
             Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("正在读取设置…")
+                androidx.compose.foundation.layout.Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(ClassSentinelSpacing.sm),
+                ) {
+                    CircularProgressIndicator(
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        "正在读取设置…",
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         } else {
             LaunchedEffect(onboardingCompleted, initialEventId) {
@@ -121,7 +151,7 @@ fun ClassSentinelApp(initialEventId: Long? = null) {
                         onIgnore = { navController.popBackStack() },
                     )
                 }
-                composable("settings") { SettingsScreen() }
+                composable("settings") { SettingsHubScreen() }
                 composable(ONBOARDING_ROUTE) {
                     OnboardingScreen(
                         onDone = {

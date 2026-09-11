@@ -28,6 +28,10 @@ import com.classsentinel.core.speech.NameCalibrationFailure
 import com.classsentinel.core.speech.NameCalibrationPreparation
 import com.classsentinel.core.speech.NameVoiceCalibrator
 import com.classsentinel.ui.AI_NAME_VOICE_PRIVACY_NOTICE
+import com.classsentinel.ui.components.AuroraCard
+import com.classsentinel.ui.components.ScreenHeader
+import com.classsentinel.ui.components.StatusPill
+import com.classsentinel.ui.theme.ClassSentinelSpacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -64,20 +68,31 @@ internal fun VoiceNameCalibrationScreen(
         }
     }
 
-    Column(Modifier.fillMaxWidth()) {
-        Text("让课堂哨兵听听你的名字", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        Text("请像老师点名时一样，自然说出自己的姓名 3 次。")
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.sm),
+    ) {
+        ScreenHeader(
+            eyebrow = "VOICE CALIBRATION",
+            title = "让课堂哨兵听听你的名字",
+            description = "请像老师点名时一样，自然说出自己的姓名 3 次。",
+        )
         Text(
             AI_NAME_VOICE_PRIVACY_NOTICE,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(16.dp))
-
-        CalibrationAttemptRow("第 1 次", state.completedSlots >= 1)
-        CalibrationAttemptRow("第 2 次", state.completedSlots >= 2)
-        CalibrationAttemptRow("第 3 次", state.completedSlots >= 3)
+        AuroraCard {
+            Column(
+                modifier = Modifier.padding(ClassSentinelSpacing.md),
+                verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.xs),
+            ) {
+                Text("校准进度", style = MaterialTheme.typography.titleMedium)
+                CalibrationAttemptRow("第 1 次", state.completedSlots >= 1)
+                CalibrationAttemptRow("第 2 次", state.completedSlots >= 2)
+                CalibrationAttemptRow("第 3 次", state.completedSlots >= 3)
+            }
+        }
 
         if (!microphoneGranted) {
             Spacer(Modifier.height(16.dp))
@@ -206,12 +221,12 @@ internal fun VoiceNameCalibrationScreen(
 @Composable
 private fun CalibrationAttemptRow(label: String, completed: Boolean) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = ClassSentinelSpacing.xs),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label)
-        Text(if (completed) "✓" else "○", style = MaterialTheme.typography.titleMedium)
+        StatusPill(label = if (completed) "已完成" else "待采样", active = completed)
     }
 }
 

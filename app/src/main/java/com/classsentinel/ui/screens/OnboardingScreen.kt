@@ -62,6 +62,10 @@ import com.classsentinel.ui.isAiSettingsComplete
 import com.classsentinel.ui.prepareOnboardingName
 import com.classsentinel.ui.saveAndCheckAi
 import com.classsentinel.ui.AI_NAME_VOICE_PRIVACY_NOTICE
+import com.classsentinel.ui.components.AuroraCard
+import com.classsentinel.ui.components.ScreenHeader
+import com.classsentinel.ui.components.StatusPill
+import com.classsentinel.ui.theme.ClassSentinelSpacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -154,92 +158,131 @@ fun OnboardingScreen(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(horizontal = ClassSentinelSpacing.lg, vertical = ClassSentinelSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("让课堂哨兵认识你", style = MaterialTheme.typography.headlineLarge)
-            Text("先配置 AI，再完成姓名识别和课堂监听", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(32.dp))
-            when (step) {
-                null -> {
-                    CircularProgressIndicator()
-                    Text("正在读取已保存配置…", style = MaterialTheme.typography.bodySmall)
-                }
-                OnboardingStep.AiConfig -> {
-                    StepAiConfig(
-                        initialSettings = checkNotNull(initialAiSettings),
-                        settings = settings,
-                        checker = checker,
-                        onReady = {
-                            aiReady = true
-                            step = OnboardingStep.NameConfig
-                        },
-                        onSkip = {
-                            aiReady = false
-                            step = OnboardingStep.NameConfig
-                        },
-                    )
-                }
-                OnboardingStep.NameConfig -> {
-                    StepName(
-                        settings = settings,
-                        generator = generator,
-                        aiReady = aiReady,
-                        onNext = { result, message ->
-                            setupMessage = message
-                            when (result) {
-                                is NameOnboardingResult.Saved -> {
-                                    pendingNameEntry = result.entry
-                                    calibrationSaveError = null
-                                    step = OnboardingStep.VoiceNameCalibration
-                                }
-                                is NameOnboardingResult.ExistingConfiguration -> {
-                                    pendingNameEntry = result.entry
-                                    step = OnboardingStep.Permissions
-                                }
+            ScreenHeader(
+                eyebrow = "FIRST RUN",
+                title = "让课堂哨兵认识你",
+                description = "先完成必要设置，之后每次上课都能更安静地开始。",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(ClassSentinelSpacing.xl))
+            OnboardingProgress(step)
+            Spacer(Modifier.height(ClassSentinelSpacing.lg))
+            AuroraCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(ClassSentinelSpacing.xl),
+                    verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.md),
+                ) {
+                    when (step) {
+                        null -> {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            Text("正在读取已保存配置…", style = MaterialTheme.typography.bodySmall)
+                        }
+                        OnboardingStep.AiConfig -> {
+                            StepAiConfig(
+                                initialSettings = checkNotNull(initialAiSettings),
+                                settings = settings,
+                                checker = checker,
+                                onReady = {
+                                    aiReady = true
+                                    step = OnboardingStep.NameConfig
+                                },
+                                onSkip = {
+                                    aiReady = false
+                                    step = OnboardingStep.NameConfig
+                                },
+                            )
+                        }
+                        OnboardingStep.NameConfig -> {
+                            StepName(
+                                settings = settings,
+                                generator = generator,
+                                aiReady = aiReady,
+                                onNext = { result, message ->
+                                    setupMessage = message
+                                    when (result) {
+                                        is NameOnboardingResult.Saved -> {
+                                            pendingNameEntry = result.entry
+                                            calibrationSaveError = null
+                                            step = OnboardingStep.VoiceNameCalibration
+                                        }
+                                        is NameOnboardingResult.ExistingConfiguration -> {
+                                            pendingNameEntry = result.entry
+                                            step = OnboardingStep.Permissions
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        OnboardingStep.VoiceNameCalibration -> {
+                            val pending = pendingNameEntry
+                            if (pending == null) {
+                                Text("正在恢复姓名配置…", style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                VoiceNameCalibrationScreen(
+                                    expectedDisplayName = pending.display,
+                                    aiSeedVariants = pending.asrVariants,
+                                    calibrator = voiceCalibrator,
+                                    microphoneGranted = audioGranted,
+                                    onRequestMicrophone = {
+                                        audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    },
+                                    onFinished = ::saveCalibratedName,
+                                    saving = savingCalibratedName,
+                                    saveError = calibrationSaveError,
+                                )
                             }
-                        },
-                    )
-                }
-                OnboardingStep.VoiceNameCalibration -> {
-                    val pending = pendingNameEntry
-                    if (pending == null) {
-                        Text("正在恢复姓名配置…", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        VoiceNameCalibrationScreen(
-                            expectedDisplayName = pending.display,
-                            aiSeedVariants = pending.asrVariants,
-                            calibrator = voiceCalibrator,
-                            microphoneGranted = audioGranted,
-                            onRequestMicrophone = {
-                                audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            },
-                            onFinished = ::saveCalibratedName,
-                            saving = savingCalibratedName,
-                            saveError = calibrationSaveError,
-                        )
+                        }
+                        OnboardingStep.Permissions -> {
+                            StepPermissions(
+                                setupMessage = setupMessage,
+                                audioGranted = audioGranted,
+                                notifyGranted = notifyGranted,
+                                onRequestAudio = {
+                                    audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                },
+                                onRequestNotify = {
+                                    notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                },
+                                onDone = onDone,
+                            )
+                        }
                     }
                 }
-                OnboardingStep.Permissions -> {
-                    StepPermissions(
-                        setupMessage = setupMessage,
-                        audioGranted = audioGranted,
-                        notifyGranted = notifyGranted,
-                        onRequestAudio = {
-                            audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                        onRequestNotify = {
-                            notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        },
-                        onDone = onDone,
-                    )
-                }
             }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingProgress(step: OnboardingStep?) {
+    val steps = listOf(
+        "AI 配置" to (step == OnboardingStep.AiConfig),
+        "姓名识别" to (step == OnboardingStep.NameConfig),
+        "声音校准" to (step == OnboardingStep.VoiceNameCalibration),
+        "权限" to (step == OnboardingStep.Permissions),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        steps.forEach { (label, current) ->
+            StatusPill(
+                label = label,
+                active = current,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
