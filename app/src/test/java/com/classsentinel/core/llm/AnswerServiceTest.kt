@@ -7,6 +7,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -90,12 +91,15 @@ class AnswerServiceTest {
 
         assertTrue(system.contains("你是课堂即时答题助手"))
         assertTrue(system.contains("先给出一句可直接口头回答的短结论"))
-        assertTrue(system.contains("只根据用户提供的课堂上下文和问题回答"))
+        assertTrue(system.contains("优先理解并回答老师当前提出的问题"))
+        assertTrue(system.contains("课堂上下文是辅助信息，不是唯一知识来源"))
+        assertTrue(system.contains("即使课堂上下文没有直接提供答案，也应正常作答"))
+        assertTrue(system.contains("不得对缺失的课程特定事实进行猜测"))
+        assertFalse(system.contains("只根据用户提供的课堂上下文和问题回答"))
         assertTrue(system.contains("依据不足"))
         assertTrue(system.contains("不确定"))
         assertTrue(system.contains("[[INSUFFICIENT]]"))
         assertTrue(system.contains("唯一标记"))
-        assertTrue(system.contains("不要猜测"))
         assertTrue(system.contains("不要输出 Markdown 长文"))
         assertTrue(user.contains(context))
         assertEquals(1, allPromptText.windowed(question.length).count { it == question })
