@@ -19,6 +19,14 @@ class HomeScreenStateTest {
     }
 
     @Test
+    fun `home status pill names stop recovery instead of saying listening`() {
+        assertEquals(
+            "停止待重试",
+            homeStatusPillLabel(PipelineState.Error("停止失败", retryableStop = true), hasActiveCourse = true),
+        )
+    }
+
+    @Test
     fun `home start gate never allows service start before model readiness`() {
         assertEquals(LocalListeningStartGate.MODEL_NOT_READY, localListeningStartGate(null))
         assertEquals(LocalListeningStartGate.MODEL_NOT_READY, localListeningStartGate(false))

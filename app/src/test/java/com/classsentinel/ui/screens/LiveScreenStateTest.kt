@@ -77,6 +77,14 @@ class LiveScreenStateTest {
     }
 
     @Test
+    fun `live status pill names stop recovery instead of saying running`() {
+        assertEquals(
+            "停止待重试",
+            liveStatusPillLabel(PipelineState.Error("停止失败", retryableStop = true)),
+        )
+    }
+
+    @Test
     fun `history persistence warning is non blocking and session scoped`() {
         assertEquals(null, historyPersistenceWarning(false))
         assertEquals("本节部分历史保存失败", historyPersistenceWarning(true))

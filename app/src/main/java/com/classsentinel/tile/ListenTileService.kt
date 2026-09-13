@@ -43,9 +43,8 @@ internal fun isListeningState(state: PipelineState): Boolean = when (state) {
     is PipelineState.Recovering,
     PipelineState.Stopping,
     -> true
-    PipelineState.Idle,
-    is PipelineState.Error,
-    -> false
+    PipelineState.Idle -> false
+    is PipelineState.Error -> state.retryableStop
 }
 
 internal fun tilePresentationFor(state: PipelineState, ready: Boolean): TilePresentation = when {

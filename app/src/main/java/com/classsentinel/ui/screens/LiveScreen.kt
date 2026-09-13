@@ -43,6 +43,12 @@ internal fun liveStateText(state: PipelineState): String = when (state) {
     is PipelineState.Error -> if (state.retryableStop) "停止失败，请再次停止" else "出错：${state.message}"
 }
 
+internal fun liveStatusPillLabel(state: PipelineState): String = when {
+    state is PipelineState.Error && state.retryableStop -> "停止待重试"
+    state.isSessionActive() -> "运行中"
+    else -> "已暂停"
+}
+
 internal const val HISTORY_PERSISTENCE_DEGRADED_MESSAGE = "本节部分历史保存失败"
 
 internal fun historyPersistenceWarning(degraded: Boolean): String? =
@@ -127,7 +133,7 @@ fun LiveScreen() {
                     ) {
                         Text("监听状态", style = MaterialTheme.typography.titleMedium)
                         StatusPill(
-                            label = if (sessionActive) "运行中" else "已暂停",
+                            label = liveStatusPillLabel(pipelineState),
                             active = sessionActive,
                         )
                     }

@@ -51,4 +51,16 @@ class ListenTileStateTest {
         assertTrue(!isListeningState(PipelineState.Idle))
         assertTrue(isListeningState(PipelineState.Stopping))
     }
+
+    @Test
+    fun `stop recovery error stays active and offers stop retry`() {
+        val state = PipelineState.Error("停止失败", retryableStop = true)
+
+        assertEquals(TilePresentation.ACTIVE, tilePresentationFor(state, ready = false))
+        assertEquals(
+            ListenTileAction.STOP,
+            tileActionFor(state, microphoneGranted = false, modelReady = false),
+        )
+        assertTrue(isListeningState(state))
+    }
 }

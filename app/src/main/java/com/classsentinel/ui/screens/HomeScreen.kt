@@ -54,6 +54,13 @@ internal fun homeStateText(state: PipelineState): String = when (state) {
     is PipelineState.Error -> if (state.retryableStop) "停止失败，请再次停止" else "监听出错：${state.message}"
 }
 
+internal fun homeStatusPillLabel(state: PipelineState, hasActiveCourse: Boolean): String = when {
+    state is PipelineState.Error && state.retryableStop -> "停止待重试"
+    state.isSessionActive() || hasActiveCourse -> "正在监听"
+    state is PipelineState.Error -> "需要处理"
+    else -> "未在监听"
+}
+
 internal fun localAsrModelReady(
     filesDir: File,
 ): Boolean {
@@ -113,11 +120,7 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
                 ) {
                     Text("监听状态", style = MaterialTheme.typography.titleMedium)
                     StatusPill(
-                        label = when {
-                            listening -> "正在监听"
-                            pipelineState is PipelineState.Error -> "需要处理"
-                            else -> "未在监听"
-                        },
+                        label = homeStatusPillLabel(pipelineState, activeCourseId != null),
                         active = listening,
                     )
                 }
