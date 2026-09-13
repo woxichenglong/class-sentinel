@@ -29,5 +29,9 @@ sealed interface PipelineState {
         val message: String,
     ) : PipelineState
 
-    data class Error(val message: String) : PipelineState
+    data class Error(
+        val message: String,
+        /** True only while a failed stop still has a live handle that can be retried. */
+        val retryableStop: Boolean = false,
+    ) : PipelineState
 }

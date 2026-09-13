@@ -14,5 +14,6 @@ class ListenUiStateTest {
         assertTrue(PipelineState.Recovering("TeleSpeech", "恢复中").isSessionActive())
         assertTrue(PipelineState.Stopping.isSessionActive())
         assertFalse(PipelineState.Error("安全错误").isSessionActive())
+        assertTrue(PipelineState.Error("停止失败", retryableStop = true).isSessionActive())
     }
 }

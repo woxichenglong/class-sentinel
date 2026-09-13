@@ -40,7 +40,7 @@ internal fun liveStateText(state: PipelineState): String = when (state) {
     is PipelineState.Listening -> "监听中 · 已转写 ${state.sentences} 句"
     is PipelineState.Recovering -> "正在恢复监听：${state.message}"
     PipelineState.Stopping -> "正在停止监听…"
-    is PipelineState.Error -> "出错：${state.message}"
+    is PipelineState.Error -> if (state.retryableStop) "停止失败，请再次停止" else "出错：${state.message}"
 }
 
 internal const val HISTORY_PERSISTENCE_DEGRADED_MESSAGE = "本节部分历史保存失败"

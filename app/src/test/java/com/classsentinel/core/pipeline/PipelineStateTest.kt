@@ -27,6 +27,13 @@ class PipelineStateTest {
         assertEquals("转写中断", e.message)
     }
 
+    @Test
+    fun `stop recovery error is explicitly marked retryable`() {
+        val e = PipelineState.Error("停止失败", retryableStop = true)
+
+        assertEquals(true, e.retryableStop)
+    }
+
     // ---- 新增状态 ----
 
     @Test

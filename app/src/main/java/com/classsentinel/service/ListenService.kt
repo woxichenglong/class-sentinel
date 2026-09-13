@@ -185,7 +185,7 @@ class ListenService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_START -> {
-                if (recordingRequested) return START_NOT_STICKY
+                if (recordingRequested || isStopRecovery()) return START_NOT_STICKY
                 recordingRequested = true
                 // 先把“启动中”发布给首页和前台通知；否则通知会在真正创建课程/管线前
                 // 读取到初始 Idle，用户会误以为引擎根本没有开启。
@@ -216,9 +216,16 @@ class ListenService : Service() {
         },
         stopSelfResult = { id -> stopSelfResult(id) },
         onStartFailure = {
+            recordingRequested = false
             terminalError = PipelineState.Error("监听启动失败")
             LiveStreamBus.pushState(terminalError!!)
             stopSelf()
+        },
+        onStopSuccess = {
+            recordingRequested = false
+        },
+        onStopFailure = {
+            LiveStreamBus.pushState(PipelineState.Error("停止失败", retryableStop = true))
         },
     )
 
@@ -360,14 +367,18 @@ class ListenService : Service() {
         PipelineState.Idle -> ListenNotificationStatus(0L, "未开始", 0)
     }
 
-    private fun hasActiveListeningSession(): Boolean = when (LiveStreamBus.pipelineState.value) {
-        PipelineState.Idle, is PipelineState.Error -> false
+    private fun hasActiveListeningSession(): Boolean = when (val state = LiveStreamBus.pipelineState.value) {
+        PipelineState.Idle -> false
+        is PipelineState.Error -> state.retryableStop
         is PipelineState.Starting,
         is PipelineState.Listening,
         is PipelineState.Recovering,
         is PipelineState.Stopping,
         -> true
     }
+
+    private fun isStopRecovery(): Boolean =
+        (LiveStreamBus.pipelineState.value as? PipelineState.Error)?.retryableStop == true
 
     private fun createNotificationChannel() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

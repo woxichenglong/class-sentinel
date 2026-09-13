@@ -51,7 +51,7 @@ internal fun homeStateText(state: PipelineState): String = when (state) {
     is PipelineState.Listening -> "正在监听 · 已转写 ${state.sentences} 句"
     is PipelineState.Recovering -> "正在恢复监听：${state.message}"
     PipelineState.Stopping -> "正在停止监听…"
-    is PipelineState.Error -> "监听出错：${state.message}"
+    is PipelineState.Error -> if (state.retryableStop) "停止失败，请再次停止" else "监听出错：${state.message}"
 }
 
 internal fun localAsrModelReady(
@@ -72,13 +72,13 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
     val modelReady = controls.modelReady
     val preparingModel = controls.preparing
     val listening = pipelineState.isSessionActive() || activeCourseId != null
+    val stopRecovery = (pipelineState as? PipelineState.Error)?.retryableStop == true
 
     fun toggleListening() {
-        if (pipelineState == PipelineState.Stopping) return
-        if (listening) {
-            ListenService.stop(context)
-        } else {
-            controls.requestStart()
+        when (livePrimaryActionUi(pipelineState).action) {
+            LivePrimaryAction.START -> controls.requestStart()
+            LivePrimaryAction.STOP -> ListenService.stop(context)
+            LivePrimaryAction.DISABLED -> Unit
         }
     }
 
@@ -150,6 +150,7 @@ fun HomeScreen(onOpenLive: () -> Unit = {}) {
                     Text(
                         when {
                             pipelineState == PipelineState.Stopping -> "正在停止…"
+                            stopRecovery -> "再次停止"
                             listening -> "停止监听"
                             preparingModel -> "准备模型…"
                             else -> "开始监听"

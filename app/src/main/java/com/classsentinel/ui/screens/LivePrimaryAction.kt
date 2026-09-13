@@ -17,9 +17,12 @@ internal data class LivePrimaryActionUi(
 )
 
 internal fun livePrimaryActionUi(state: PipelineState): LivePrimaryActionUi = when (state) {
-    PipelineState.Idle,
-    is PipelineState.Error,
-    -> LivePrimaryActionUi("开始", LivePrimaryAction.START, enabled = true)
+    PipelineState.Idle -> LivePrimaryActionUi("开始", LivePrimaryAction.START, enabled = true)
+    is PipelineState.Error -> if (state.retryableStop) {
+        LivePrimaryActionUi("再次停止", LivePrimaryAction.STOP, enabled = true)
+    } else {
+        LivePrimaryActionUi("开始", LivePrimaryAction.START, enabled = true)
+    }
 
     PipelineState.Starting,
     is PipelineState.Listening,

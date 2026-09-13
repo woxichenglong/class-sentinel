@@ -12,6 +12,10 @@ class HomeScreenStateTest {
         assertEquals("正在监听 · 已转写 3 句", homeStateText(PipelineState.Listening(3)))
         assertEquals("正在启动监听…", homeStateText(PipelineState.Starting))
         assertEquals("监听出错：转写中断", homeStateText(PipelineState.Error("转写中断")))
+        assertEquals(
+            "停止失败，请再次停止",
+            homeStateText(PipelineState.Error("停止失败", retryableStop = true)),
+        )
     }
 
     @Test

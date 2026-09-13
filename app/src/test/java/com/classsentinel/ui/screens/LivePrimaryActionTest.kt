@@ -27,6 +27,14 @@ class LivePrimaryActionTest {
     }
 
     @Test
+    fun `stop recovery error maps to an enabled retry stop`() {
+        assertEquals(
+            LivePrimaryActionUi("再次停止", LivePrimaryAction.STOP, enabled = true),
+            livePrimaryActionUi(PipelineState.Error("停止失败", retryableStop = true)),
+        )
+    }
+
+    @Test
     fun `starting listening and recovering map to enabled stop`() {
         val expected = LivePrimaryActionUi("停止", LivePrimaryAction.STOP, enabled = true)
 

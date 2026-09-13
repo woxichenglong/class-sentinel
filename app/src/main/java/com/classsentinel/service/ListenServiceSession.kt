@@ -24,6 +24,8 @@ internal class ListenServiceSession(
     private val createHandle: suspend () -> ListenSessionHandle,
     private val stopSelfResult: (Int) -> Boolean,
     private val onStartFailure: (Throwable) -> Unit = {},
+    private val onStopSuccess: () -> Unit = {},
+    private val onStopFailure: (Throwable?) -> Unit = {},
 ) {
 
     private val lock = Any()
@@ -78,27 +80,44 @@ internal class ListenServiceSession(
     fun stop(startId: Int): Job {
         return scope.launch {
             var shouldStopService = false
-            val inFlight = synchronized(lock) { startJob?.takeIf { !it.isCompleted } }
-            if (inFlight != null) {
-                inFlight.cancelAndJoin()
-            }
-
-            handleStopMutex.withLock {
-                val current = synchronized(lock) { handle }
-                if (current != null) {
-                    // 不把“协程已取消”当作 native 资源已释放；必须进入下层 stop。
-                    if (current.stop()) {
-                        shouldStopService = true
-                        synchronized(lock) {
-                            if (handle === current) handle = null
-                        }
-                    }
-                } else {
-                    shouldStopService = true
+            try {
+                val inFlight = synchronized(lock) { startJob?.takeIf { !it.isCompleted } }
+                if (inFlight != null) {
+                    inFlight.cancelAndJoin()
                 }
+
+                handleStopMutex.withLock {
+                    val current = synchronized(lock) { handle }
+                    if (current != null) {
+                        // 不把“协程已取消”当作 native 资源已释放；必须进入下层 stop。
+                        if (current.stop()) {
+                            shouldStopService = true
+                            synchronized(lock) {
+                                if (handle === current) handle = null
+                            }
+                        }
+                    } else {
+                        shouldStopService = true
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notifyStopFailure(e)
+                throw e
             }
-            if (shouldStopService) stopSelfResult(startId)
+            if (shouldStopService) {
+                runCatching { onStopSuccess() }
+                stopSelfResult(startId)
+            } else {
+                notifyStopFailure(null)
+            }
         }
+    }
+
+    /** Do not let a failed stop disappear without a UI recovery projection. */
+    private fun notifyStopFailure(error: Throwable?) {
+        runCatching { onStopFailure(error) }
     }
 }
 

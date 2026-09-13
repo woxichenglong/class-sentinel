@@ -121,6 +121,36 @@ class ListenServiceSessionTest {
     }
 
     @Test
+    fun `stop result is projected so failed finalize keeps the UI on stop recovery`() = runTest {
+        var failFirstStop = true
+        var successes = 0
+        var failures = 0
+        val handle = object : ListenSessionHandle {
+            override suspend fun start(): Boolean = true
+            override suspend fun stop(): Boolean = if (failFirstStop) {
+                failFirstStop = false
+                false
+            } else {
+                true
+            }
+        }
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = { handle },
+            stopSelfResult = { true },
+            onStopSuccess = { successes++ },
+            onStopFailure = { failures++ },
+        )
+
+        session.start().join()
+        session.stop(41).join()
+        session.stop(42).join()
+
+        assertEquals(1, failures)
+        assertEquals(1, successes)
+    }
+
+    @Test
     fun `failed handle stop keeps the service alive for a later retry`() = runTest {
         var failFirstStop = true
         val stopSelfIds = mutableListOf<Int>()

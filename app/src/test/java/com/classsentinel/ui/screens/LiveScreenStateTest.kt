@@ -70,6 +70,10 @@ class LiveScreenStateTest {
     fun `live state text has no self test prompt`() {
         assertEquals("监听中 · 已转写 1 句", liveStateText(PipelineState.Listening(1)))
         assertEquals("未在监听", liveStateText(PipelineState.Idle))
+        assertEquals(
+            "停止失败，请再次停止",
+            liveStateText(PipelineState.Error("停止失败", retryableStop = true)),
+        )
     }
 
     @Test
