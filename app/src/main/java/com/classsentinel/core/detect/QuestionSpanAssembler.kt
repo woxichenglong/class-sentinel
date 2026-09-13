@@ -16,17 +16,20 @@ internal object QuestionSpanAssembler {
         val currentText = current.text.trimStart()
         if (previousText.isEmpty() || currentText.isEmpty()) return current.text
 
-        val separator = if (
-            previousFinal.text.lastOrNull()?.isWhitespace() == true ||
+        val previousLast = previousText.lastOrNull()
+        val currentFirst = currentText.firstOrNull()
+        val hasExistingSpace = previousFinal.text.lastOrNull()?.isWhitespace() == true ||
             current.text.firstOrNull()?.isWhitespace() == true
-        ) {
+        val hasAsciiBoundary = isAsciiWordChar(previousLast) && isAsciiWordChar(currentFirst)
+        val separator = if (hasExistingSpace || hasAsciiBoundary) {
             " "
         } else {
-            // Adjacent ASCII letters/digits are joined directly so a split word such as
-            // "learn" + "ing" remains "learning". Other boundaries also remain raw.
             ""
         }
         val merged = previousText + separator + currentText
         return merged.takeIf { it.length <= MAX_QUESTION_CHARS } ?: current.text
     }
+
+    private fun isAsciiWordChar(value: Char?): Boolean =
+        value != null && (value in 'a'..'z' || value in 'A'..'Z' || value in '0'..'9')
 }

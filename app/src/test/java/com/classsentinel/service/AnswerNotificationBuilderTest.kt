@@ -61,4 +61,18 @@ class AnswerNotificationBuilderTest {
         assertFalse(extrasText.contains("sk-provider-secret"))
         assertTrue(notification.contentIntent != null)
     }
+
+    @Test
+    fun `ignore action targets the service instead of opening the answer activity`() {
+        val context = RuntimeEnvironment.getApplication()
+
+        val intent = AnswerNotificationBuilder.actionIntent(
+            context = context,
+            eventId = 42L,
+            action = AnswerNotificationBuilder.ACTION_IGNORE,
+        )
+
+        assertEquals(ListenService::class.java.name, intent.component?.className)
+        assertEquals(AnswerNotificationBuilder.ACTION_IGNORE, intent.action)
+    }
 }

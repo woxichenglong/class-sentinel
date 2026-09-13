@@ -7,6 +7,7 @@ import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.data.entities.EventEntity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -180,6 +181,67 @@ class ListenServiceTest {
 
         assertEquals(persisted.triggerText, request.question)
         assertEquals(persisted.contextText, request.context)
+    }
+
+    @Test
+    fun `idle retry owns the service and stops only after answer completion`() = runTest {
+        val stopIds = mutableListOf<Int>()
+        val answerFinished = CompletableDeferred<Unit>()
+        val persisted = EventEntity(
+            id = 17L,
+            courseId = 1L,
+            type = "QUESTION",
+            triggerText = "问题",
+            contextText = "上下文",
+            notifiedAt = 2_000L,
+            ts = 2_000L,
+        )
+
+        val retryJob = launch {
+            executeRetry(
+                eventId = persisted.id,
+                startId = 31,
+                wasActiveAtStart = false,
+                loadEvent = { persisted },
+                generateAnswer = { answerFinished.await() },
+                isActive = { false },
+                stopSelfResult = { stopIds += it; true },
+            )
+        }
+        runCurrent()
+        assertEquals(emptyList<Int>(), stopIds)
+
+        answerFinished.complete(Unit)
+        retryJob.join()
+
+        assertEquals(listOf(31), stopIds)
+    }
+
+    @Test
+    fun `retry does not stop a service that is active when the answer finishes`() = runTest {
+        val stopIds = mutableListOf<Int>()
+        var active = false
+        val persisted = EventEntity(
+            id = 18L,
+            courseId = 1L,
+            type = "QUESTION",
+            triggerText = "问题",
+            contextText = "上下文",
+            notifiedAt = 2_000L,
+            ts = 2_000L,
+        )
+
+        executeRetry(
+            eventId = persisted.id,
+            startId = 32,
+            wasActiveAtStart = false,
+            loadEvent = { persisted },
+            generateAnswer = { active = true },
+            isActive = { active },
+            stopSelfResult = { stopIds += it; true },
+        )
+
+        assertEquals(emptyList<Int>(), stopIds)
     }
 
     @Test

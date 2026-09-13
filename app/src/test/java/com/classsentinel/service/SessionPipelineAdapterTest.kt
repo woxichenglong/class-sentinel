@@ -303,7 +303,7 @@ class SessionPipelineAdapterTest {
 
         val persistedEvent = checkNotNull(persisted)
         val request = checkNotNull(answerRequest)
-        val expected = "比如老师问 what is the difference between machine learning and deep learning，请你用自己的话解释一下。"
+        val expected = "比如老师问 what is the difference between machine learning and deep learn ing，请你用自己的话解释一下。"
         assertEquals(expected, persistedEvent.triggerText)
         assertEquals(persistedEvent.triggerText, request.question)
         assertEquals(persistedEvent.contextText, request.context)

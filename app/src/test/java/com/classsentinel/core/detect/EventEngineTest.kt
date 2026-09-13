@@ -505,7 +505,7 @@ class EventEngineTest {
         assertEquals(EventType.QUESTION, event?.type)
         assertEquals(EventScope.DIRECT, event?.scope)
         assertEquals(
-            "比如老师问 what is the difference between machine learning and deep learning，请你用自己的话解释一下。",
+            "比如老师问 what is the difference between machine learning and deep learn ing，请你用自己的话解释一下。",
             event?.triggerText,
         )
         assertEquals("${previous.text}\n${current.text}", event?.context)

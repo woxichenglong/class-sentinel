@@ -48,6 +48,23 @@ internal fun EventEntity.toRetryQuestionEvent(): ClassEvent = ClassEvent(
     ts = ts,
 )
 
+/** Runs a retry request and stops only a service that was idle when the retry began. */
+internal suspend fun executeRetry(
+    eventId: Long,
+    startId: Int,
+    wasActiveAtStart: Boolean,
+    loadEvent: suspend (Long) -> EventEntity?,
+    generateAnswer: suspend (EventEntity) -> Unit,
+    isActive: () -> Boolean,
+    stopSelfResult: (Int) -> Boolean,
+) {
+    try {
+        loadEvent(eventId)?.let { generateAnswer(it) }
+    } finally {
+        if (!wasActiveAtStart && !isActive()) stopSelfResult(startId)
+    }
+}
+
 /**
  * 听讲前台服务：常驻通知「正在听讲」，麦克风采集 → 本地 sherpa-onnx 连续 ASR
  * → final 事件检测 → AlertCoordinator/答案通知。
@@ -132,15 +149,33 @@ class ListenService : Service() {
             ACTION_RETRY -> {
                 val eventId = intent.getLongExtra(EXTRA_EVENT_ID, -1L)
                 if (eventId > 0L) {
+                    val wasActiveAtStart = hasActiveListeningSession()
                     scope.launch {
-                        val event = withContext(Dispatchers.IO) {
-                            AppDatabase.get(applicationContext).eventDao().getQuestionById(eventId)
-                        }
-                        if (event != null) {
-                            launchAnswer(event.toRetryQuestionEvent(), event.id)
-                        }
+                        executeRetry(
+                            eventId = eventId,
+                            startId = startId,
+                            wasActiveAtStart = wasActiveAtStart,
+                            loadEvent = { id ->
+                                withContext(Dispatchers.IO) {
+                                    AppDatabase.get(applicationContext).eventDao().getQuestionById(id)
+                                }
+                            },
+                            generateAnswer = { event ->
+                                launchAnswer(event.toRetryQuestionEvent(), event.id).join()
+                            },
+                            isActive = ::hasActiveListeningSession,
+                            stopSelfResult = { id -> stopSelfResult(id) },
+                        )
                     }
+                } else if (!hasActiveListeningSession()) {
+                    stopSelfResult(startId)
                 }
+                return START_NOT_STICKY
+            }
+            ACTION_IGNORE -> {
+                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                    .cancel(AnswerNotificationBuilder.NOTIFICATION_ID)
+                if (!hasActiveListeningSession()) stopSelfResult(startId)
                 return START_NOT_STICKY
             }
             ACTION_STOP -> {
@@ -216,47 +251,45 @@ class ListenService : Service() {
     }
 
     /** LLM 流式答题：coordinator 去重，结果更新原 event ID 与答案通知。 */
-    private fun launchAnswer(event: ClassEvent, eventId: Long?) {
+    private fun launchAnswer(event: ClassEvent, eventId: Long?): Job = scope.launch {
         val requestKey = eventId?.let { "event:$it" }
             ?: "transient:${transientAnswerSequence.incrementAndGet()}"
-        scope.launch {
-            val repo = SettingsRepositoryHolder.get(this@ListenService)
-            val ai = try {
-                repo.aiSettingsFlow.first()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-            if (ai == null || ai.apiKey.isBlank()) {
-                handleAnswerResult(
-                    AnswerRequest(
-                        eventId = eventId,
-                        requestKey = requestKey,
-                        question = event.triggerText,
-                        context = event.context,
-                    ),
-                    AnswerResult.Failed("CONFIG"),
-                )
-                return@launch
-            }
-            val styleRaw = runCatching { repo.answerStyleFlow.first() }.getOrDefault("terseness")
-            val style = if (styleRaw == "academic") AnswerStyle.ACADEMIC else AnswerStyle.TERSENESS
-            val answerLength = runCatching { repo.answerLengthFlow.first() }.getOrDefault("mid")
-            val streamOutput = runCatching { repo.streamOutputFlow.first() }.getOrDefault(true)
-            answerCoordinator.submit(
+        val repo = SettingsRepositoryHolder.get(this@ListenService)
+        val ai = try {
+            repo.aiSettingsFlow.first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (ai == null || ai.apiKey.isBlank()) {
+            handleAnswerResult(
                 AnswerRequest(
                     eventId = eventId,
                     requestKey = requestKey,
                     question = event.triggerText,
                     context = event.context,
-                    style = style,
-                    llmConfig = LlmConfig(ai.baseUrl, ai.apiKey, ai.model),
-                    answerLength = answerLength,
-                    streamOutput = streamOutput,
                 ),
+                AnswerResult.Failed("CONFIG"),
             )
+            return@launch
         }
+        val styleRaw = runCatching { repo.answerStyleFlow.first() }.getOrDefault("terseness")
+        val style = if (styleRaw == "academic") AnswerStyle.ACADEMIC else AnswerStyle.TERSENESS
+        val answerLength = runCatching { repo.answerLengthFlow.first() }.getOrDefault("mid")
+        val streamOutput = runCatching { repo.streamOutputFlow.first() }.getOrDefault(true)
+        answerCoordinator.submit(
+            AnswerRequest(
+                eventId = eventId,
+                requestKey = requestKey,
+                question = event.triggerText,
+                context = event.context,
+                style = style,
+                llmConfig = LlmConfig(ai.baseUrl, ai.apiKey, ai.model),
+                answerLength = answerLength,
+                streamOutput = streamOutput,
+            ),
+        )?.join()
     }
 
     private suspend fun handleAnswerResult(request: AnswerRequest, result: AnswerResult) =
@@ -327,6 +360,15 @@ class ListenService : Service() {
         PipelineState.Idle -> ListenNotificationStatus(0L, "未开始", 0)
     }
 
+    private fun hasActiveListeningSession(): Boolean = when (LiveStreamBus.pipelineState.value) {
+        PipelineState.Idle, is PipelineState.Error -> false
+        is PipelineState.Starting,
+        is PipelineState.Listening,
+        is PipelineState.Recovering,
+        is PipelineState.Stopping,
+        -> true
+    }
+
     private fun createNotificationChannel() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(
@@ -349,6 +391,7 @@ class ListenService : Service() {
         const val ACTION_START = "com.classsentinel.action.START"
         const val ACTION_STOP = "com.classsentinel.action.STOP"
         const val ACTION_RETRY = "com.classsentinel.action.RETRY"
+        const val ACTION_IGNORE = AnswerNotificationBuilder.ACTION_IGNORE
         const val EXTRA_EVENT_ID = AnswerNotificationBuilder.EXTRA_EVENT_ID
         const val CHANNEL_ID = "listen_service"
         private const val NOTIF_ID = 1001

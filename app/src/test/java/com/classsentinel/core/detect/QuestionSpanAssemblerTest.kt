@@ -7,7 +7,7 @@ import org.junit.Test
 class QuestionSpanAssemblerTest {
 
     @Test
-    fun `joins an English word split across adjacent finals without an extra space`() {
+    fun `separates adjacent ASCII finals instead of guessing a word boundary`() {
         val previous = FinalTranscript(
             utteranceId = 1,
             text = "比如老师问 what is the difference between machine learning and deep learn",
@@ -24,10 +24,10 @@ class QuestionSpanAssemblerTest {
         val assembled = QuestionSpanAssembler.assemble(current, previous)
 
         assertEquals(
-            "比如老师问 what is the difference between machine learning and deep learning，请你用自己的话解释一下。",
+            "比如老师问 what is the difference between machine learning and deep learn ing，请你用自己的话解释一下。",
             assembled,
         )
-        assertTrue("learn ing" !in assembled)
+        assertTrue("deep learn ing" in assembled)
     }
 
     @Test
@@ -64,6 +64,14 @@ class QuestionSpanAssemblerTest {
         val current = FinalTranscript(2, "model", 1_500L, 2_000L)
 
         assertEquals("machine learning model", QuestionSpanAssembler.assemble(current, previous))
+    }
+
+    @Test
+    fun `adds a space between separate ASCII phrases`() {
+        val previous = FinalTranscript(1, "machine learning", 0L, 1_000L)
+        val current = FinalTranscript(2, "please explain", 1_500L, 2_000L)
+
+        assertEquals("machine learning please explain", QuestionSpanAssembler.assemble(current, previous))
     }
 
     @Test

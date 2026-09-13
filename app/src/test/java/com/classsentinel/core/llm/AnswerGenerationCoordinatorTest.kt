@@ -1,12 +1,22 @@
 package com.classsentinel.core.llm
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AnswerGenerationCoordinatorTest {
@@ -125,5 +135,42 @@ class AnswerGenerationCoordinatorTest {
             ),
             results,
         )
+    }
+
+    @Test
+    fun `lazy job remains an in flight placeholder before its first start`() {
+        val published = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val firstHook = AtomicBoolean(true)
+        val executor = Executors.newSingleThreadExecutor()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val request = AnswerRequest(eventId = 99L, question = "问题", context = "上下文")
+            val coordinator = AnswerGenerationCoordinator(
+                scope = scope,
+                generate = { flowOf("答案") },
+                onResult = { _, _ -> },
+                beforeJobStart = {
+                    if (firstHook.compareAndSet(true, false)) {
+                        published.countDown()
+                        assertTrue(release.await(5, TimeUnit.SECONDS))
+                    }
+                },
+            )
+
+            val firstFuture = executor.submit<Job?> {
+                coordinator.submit(request)
+            }
+            assertTrue(published.await(5, TimeUnit.SECONDS))
+            val second = coordinator.submit(request)
+            release.countDown()
+            val first = firstFuture.get(5, TimeUnit.SECONDS)
+
+            assertSame(first, second)
+        } finally {
+            release.countDown()
+            scope.cancel()
+            executor.shutdownNow()
+        }
     }
 }

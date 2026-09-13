@@ -16,8 +16,8 @@ import kotlinx.coroutines.sync.withLock
  *   只调用一次 handle.start()；成功 stop 后丢弃 handle，下一次 start 重新创建。
  *   发布（发布 startJob 引用）后才启动协程，且不在持锁状态下执行任何用户 suspend 代码。
  * - [stop] 在 [scope] 中异步执行：优先取消并等待在途 start 协程，再停止当前 handle；
- *   不同 stop 调用用 mutex 串行化真正的 handle.stop()，每个调用仍独立执行 stopSelfResult。
- *   无论 stop 成功、抛异常还是被取消，都在 finally 中调用 [stopSelfResult]，异常原样传播。
+ *   不同 stop 调用用 mutex 串行化真正的 handle.stop()；只有 stop 成功或没有句柄时
+ *   才执行 stopSelfResult，失败保留服务以便后续重试。
  */
 internal class ListenServiceSession(
     private val scope: CoroutineScope,
@@ -77,26 +77,27 @@ internal class ListenServiceSession(
      */
     fun stop(startId: Int): Job {
         return scope.launch {
-            try {
-                val inFlight = synchronized(lock) { startJob?.takeIf { !it.isCompleted } }
-                if (inFlight != null) {
-                    inFlight.cancelAndJoin()
-                }
+            var shouldStopService = false
+            val inFlight = synchronized(lock) { startJob?.takeIf { !it.isCompleted } }
+            if (inFlight != null) {
+                inFlight.cancelAndJoin()
+            }
 
-                handleStopMutex.withLock {
-                    val current = synchronized(lock) { handle }
-                    if (current != null) {
-                        // 不把“协程已取消”当作 native 资源已释放；必须进入下层 stop。
-                        if (current.stop()) {
-                            synchronized(lock) {
-                                if (handle === current) handle = null
-                            }
+            handleStopMutex.withLock {
+                val current = synchronized(lock) { handle }
+                if (current != null) {
+                    // 不把“协程已取消”当作 native 资源已释放；必须进入下层 stop。
+                    if (current.stop()) {
+                        shouldStopService = true
+                        synchronized(lock) {
+                            if (handle === current) handle = null
                         }
                     }
+                } else {
+                    shouldStopService = true
                 }
-            } finally {
-                stopSelfResult(startId)
             }
+            if (shouldStopService) stopSelfResult(startId)
         }
     }
 }

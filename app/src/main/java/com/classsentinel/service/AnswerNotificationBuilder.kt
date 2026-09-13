@@ -23,7 +23,7 @@ internal object AnswerNotificationBuilder {
         answer: String,
     ): Notification {
         val shortAnswer = compactAnswer(answer)
-        val contentIntent = pendingActivity(context, eventId, action = null, actionIndex = 0)
+        val contentIntent = pendingAction(context, eventId, action = null, actionIndex = 0)
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("课堂答案")
@@ -42,12 +42,29 @@ internal object AnswerNotificationBuilder {
                 Notification.Action.Builder(
                     null,
                     title,
-                    pendingActivity(context, eventId, action, index + 1),
+                    pendingAction(context, eventId, action, index + 1),
                 ).build(),
             )
         }
         return notification.build()
     }
+
+    /**
+     * Shared route construction used by notification actions.
+     *
+     * Ignore is deliberately a service action: it must not open MainActivity and
+     * accidentally navigate to the answer detail screen.
+     */
+    fun actionIntent(context: Context, eventId: Long, action: String? = null): Intent =
+        if (action == ACTION_IGNORE) {
+            Intent(context, ListenService::class.java).apply {
+                this.action = ACTION_IGNORE
+                putExtra(EXTRA_EVENT_ID, eventId)
+                putExtra(EXTRA_ACTION, ACTION_IGNORE)
+            }
+        } else {
+            detailIntent(context, eventId, action)
+        }
 
     /** Shared route construction used by the notification and MainActivity deep-link handling. */
     fun detailIntent(context: Context, eventId: Long, action: String? = null): Intent =
@@ -57,17 +74,21 @@ internal object AnswerNotificationBuilder {
             if (action != null) putExtra(EXTRA_ACTION, action)
         }
 
-    private fun pendingActivity(
+    private fun pendingAction(
         context: Context,
         eventId: Long,
         action: String?,
         actionIndex: Int,
-    ): PendingIntent = PendingIntent.getActivity(
-        context,
-        requestCode(eventId, actionIndex),
-        detailIntent(context, eventId, action),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
+    ): PendingIntent {
+        val intent = actionIntent(context, eventId, action)
+        val requestCode = requestCode(eventId, actionIndex)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return if (action == ACTION_IGNORE) {
+            PendingIntent.getService(context, requestCode, intent, flags)
+        } else {
+            PendingIntent.getActivity(context, requestCode, intent, flags)
+        }
+    }
 
     private fun requestCode(eventId: Long, actionIndex: Int): Int =
         ((eventId xor (eventId ushr 32)).toInt() * 31) + actionIndex

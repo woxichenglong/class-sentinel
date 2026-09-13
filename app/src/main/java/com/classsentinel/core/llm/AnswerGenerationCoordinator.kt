@@ -35,13 +35,14 @@ internal class AnswerGenerationCoordinator(
     private val firstDeltaTimeoutMs: Long = 8_000L,
     private val idleTimeoutMs: Long = 8_000L,
     private val totalTimeoutMs: Long = 30_000L,
+    private val beforeJobStart: () -> Unit = {},
 ) {
     private val lock = Any()
     private val jobs = mutableMapOf<String, Job>()
 
     fun submit(request: AnswerRequest): Job? {
         val job = synchronized(lock) {
-            jobs[request.requestKey]?.takeIf { it.isActive }?.let { return it }
+            jobs[request.requestKey]?.takeIf { !it.isCompleted }?.let { return it }
             scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     answerResults(
@@ -67,6 +68,7 @@ internal class AnswerGenerationCoordinator(
                 }
             }.also { jobs[request.requestKey] = it }
         }
+        beforeJobStart()
         job.start()
         return job
     }

@@ -121,6 +121,33 @@ class ListenServiceSessionTest {
     }
 
     @Test
+    fun `failed handle stop keeps the service alive for a later retry`() = runTest {
+        var failFirstStop = true
+        val stopSelfIds = mutableListOf<Int>()
+        val handle = object : ListenSessionHandle {
+            override suspend fun start(): Boolean = true
+            override suspend fun stop(): Boolean = if (failFirstStop) {
+                failFirstStop = false
+                false
+            } else {
+                true
+            }
+        }
+        val session = ListenServiceSession(
+            scope = CoroutineScope(coroutineContext),
+            createHandle = { handle },
+            stopSelfResult = { stopSelfIds += it; true },
+        )
+
+        session.start().join()
+        session.stop(41).join()
+        assertEquals(emptyList<Int>(), stopSelfIds)
+
+        session.stop(42).join()
+        assertEquals(listOf(42), stopSelfIds)
+    }
+
+    @Test
     fun `handle creation failure is reported without escaping from the service scope`() = runTest {
         var failure: Throwable? = null
         val session = ListenServiceSession(
