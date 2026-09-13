@@ -46,7 +46,7 @@ class ReadmeTruthTest {
 
     @Test
     fun `settings exposes only the bundled X ASR model fact`() {
-        val settings = readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/SettingsScreen.kt")
+        val settings = readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/SettingsHubScreen.kt")
 
         assertTrue(settings.contains("语音识别模型"))
         assertTrue(settings.contains("X-ASR 中英增强模型"))
@@ -63,7 +63,7 @@ class ReadmeTruthTest {
     fun `onboarding and settings do not advertise a nonexistent overlay permission`() {
         val sourceFiles = listOf(
             readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/OnboardingScreen.kt"),
-            readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/SettingsScreen.kt"),
+            readRepositoryFile("app/src/main/java/com/classsentinel/ui/screens/SettingsHubScreen.kt"),
         )
         val source = sourceFiles.joinToString("\n")
 
@@ -73,13 +73,25 @@ class ReadmeTruthTest {
         assertFalse(source.contains("ACTION_MANAGE_OVERLAY_PERMISSION"))
     }
 
+    @Test
+    fun `production route has no legacy settings screen implementation`() {
+        val app = readRepositoryFile("app/src/main/java/com/classsentinel/ui/ClassSentinelApp.kt")
+
+        assertTrue(app.contains("SettingsHubScreen()"))
+        assertFalse(app.contains("import com.classsentinel.ui.screens.SettingsScreen"))
+        assertFalse(repositoryFile("app/src/main/java/com/classsentinel/ui/screens/SettingsScreen.kt").isFile)
+    }
+
     private fun readRepositoryFile(relativePath: String): String {
-        var directory: File? = File(System.getProperty("user.dir") ?: ".")
-        while (directory != null) {
-            val file = File(directory, relativePath)
-            if (file.isFile) return file.readText()
-            directory = directory.parentFile
-        }
+        val file = repositoryFile(relativePath)
+        if (file.isFile) return file.readText()
         error("Repository file not found: $relativePath")
+    }
+
+    private fun repositoryFile(relativePath: String): File {
+        val root = generateSequence(File(System.getProperty("user.dir") ?: ".").absoluteFile) { it.parentFile }
+            .firstOrNull { File(it, "README.md").isFile && File(it, "app").isDirectory }
+            ?: error("Repository root not found")
+        return File(root, relativePath)
     }
 }

@@ -10,6 +10,9 @@ val releaseKeystorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
 val releaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
+val enableAbiSplits = providers.gradleProperty("classSentinelAbiSplits")
+    .map(String::toBoolean)
+    .getOrElse(false)
 
 android {
     namespace = "com.classsentinel"
@@ -55,6 +58,14 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+    }
+    splits {
+        abi {
+            isEnable = enableAbiSplits
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = true
+        }
     }
     packaging {
         jniLibs {

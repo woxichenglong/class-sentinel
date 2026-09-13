@@ -130,6 +130,35 @@ class ListenServiceTest {
     }
 
     @Test
+    fun `a repeated START after startup does not restart or kill the running session`() = runTest {
+        var starts = 0
+        var foregrounds = 0
+        val injectedSession = ListenServiceSession(
+            scope = this,
+            createHandle = {
+                object : ListenSessionHandle {
+                    override suspend fun start(): Boolean { starts++; return true }
+                    override suspend fun stop(): Boolean = true
+                }
+            },
+            stopSelfResult = { true },
+        )
+        val service = ListenService().apply {
+            sessionOverride = injectedSession
+            foregroundOverride = { foregrounds++ }
+        }
+        service.onStartCommand(Intent().setAction(ListenService.ACTION_START), 0, 1)
+        runCurrent()
+        LiveStreamBus.pushState(PipelineState.Listening(1))
+        service.onStartCommand(Intent().setAction(ListenService.ACTION_START), 0, 2)
+        runCurrent()
+
+        assertEquals(1, starts)
+        assertEquals(1, foregrounds)
+        assertEquals(PipelineState.Listening(1), LiveStreamBus.pipelineState.value)
+    }
+
+    @Test
     fun `retry answer request reuses the assembled question persisted in the event`() {
         val assembled = "what is the difference between machine learning and deep learning，请你解释一下。"
         val persisted = EventEntity(
@@ -151,5 +180,45 @@ class ListenServiceTest {
 
         assertEquals(persisted.triggerText, request.question)
         assertEquals(persisted.contextText, request.context)
+    }
+
+    @Test
+    fun `runtime failure closes and finalizes before exposing retry and ignores late states`() = runTest {
+        val events = mutableListOf<String>()
+        val controller = ListenSessionController(
+            store = object : CourseSessionStore {
+                override suspend fun createCourse(): Long = 7L
+                override suspend fun finalizeCourse(courseId: Long, endTs: Long) { events += "finalize" }
+            },
+            pipeline = object : SessionPipeline {
+                override suspend fun start() = Unit
+                override suspend fun stop() { events += "release" }
+            },
+        )
+        val injectedSession = ListenServiceSession(
+            scope = this,
+            createHandle = {
+                object : ListenSessionHandle {
+                    override suspend fun start() = controller.start()
+                    override suspend fun stop() = controller.stop()
+                }
+            },
+            stopSelfResult = { events += "stopSelf:$it"; true },
+        )
+        val service = ListenService().apply {
+            sessionOverride = injectedSession
+            foregroundOverride = {}
+        }
+        service.onStartCommand(Intent().setAction(ListenService.ACTION_START), 0, 10)
+        runCurrent()
+        service.onPipelineStateChanged(PipelineState.Error("转写中断"))
+        assertEquals(PipelineState.Stopping, LiveStreamBus.pipelineState.value)
+        service.onPipelineStateChanged(PipelineState.Listening(1))
+        assertEquals(PipelineState.Stopping, LiveStreamBus.pipelineState.value)
+        runCurrent()
+        assertEquals(listOf("release", "finalize", "stopSelf:10"), events)
+        assertEquals(SessionState.Idle, controller.state.value)
+        service.onDestroy()
+        assertEquals(PipelineState.Error("转写中断"), LiveStreamBus.pipelineState.value)
     }
 }

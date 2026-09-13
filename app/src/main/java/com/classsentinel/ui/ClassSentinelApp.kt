@@ -36,7 +36,6 @@ import com.classsentinel.ui.screens.HistoryScreen
 import com.classsentinel.ui.screens.HomeScreen
 import com.classsentinel.ui.screens.LiveScreen
 import com.classsentinel.ui.screens.OnboardingScreen
-import com.classsentinel.ui.screens.SettingsScreen
 import com.classsentinel.ui.screens.SettingsHubScreen
 import com.classsentinel.ui.theme.ClassSentinelSpacing
 import kotlinx.coroutines.flow.combine

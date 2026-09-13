@@ -1,6 +1,8 @@
 package com.classsentinel.ui.screens
 
 import com.classsentinel.core.llm.AnswerResult
+import com.classsentinel.core.detect.NameTargetConfidence
+import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.pipeline.PipelineState
 import com.classsentinel.service.LiveAnswerState
 import com.classsentinel.service.LiveTranscriptLine
@@ -74,5 +76,28 @@ class LiveScreenStateTest {
     fun `history persistence warning is non blocking and session scoped`() {
         assertEquals(null, historyPersistenceWarning(false))
         assertEquals("本节部分历史保存失败", historyPersistenceWarning(true))
+    }
+
+    @Test
+    fun `suspected target warning shows canonical name without classroom transcript`() {
+        val event = PersonalizedNameTargetEvent(
+            transcript = "梁金钢你看一下这道题",
+            targetName = "梁金刚",
+            matchedText = "梁金钢",
+            confidence = NameTargetConfidence.SUSPECT,
+            score = 0.78,
+            timestampMs = 1L,
+        )
+
+        assertEquals("可能叫到「梁金刚」，请留意", suspectedNameTargetWarning(event))
+    }
+
+    @Test
+    fun `transcript key remains stable when a partial is replaced`() {
+        val first = LiveTranscriptLine.Partial(7, "第一版", 100L)
+        val replacement = LiveTranscriptLine.Partial(7, "第二版", 200L)
+
+        assertEquals(liveTranscriptKey(first), liveTranscriptKey(replacement))
+        assertEquals(7, liveTranscriptKey(first))
     }
 }

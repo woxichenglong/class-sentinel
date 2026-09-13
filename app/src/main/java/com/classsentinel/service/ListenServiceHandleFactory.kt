@@ -18,9 +18,11 @@ import com.classsentinel.core.detect.NameTargetConfidence
 import com.classsentinel.core.detect.PersonalizedNameResolver
 import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.pipeline.StreamingListenPipeline
+import com.classsentinel.core.speech.ModelIntegrityVerifier
 import com.classsentinel.core.speech.ModelProfiles
+import com.classsentinel.core.speech.ModelReadinessChecker
 import com.classsentinel.core.speech.ProductionAsrEngineStarter
-import com.classsentinel.core.speech.SherpaModelInstaller
+import com.classsentinel.core.speech.SherpaOnlineRecognizerPort
 import com.classsentinel.core.speech.SherpaOnnxRecognizerFactory
 import com.classsentinel.core.speech.SherpaOnnxStreamingEngine
 import com.classsentinel.core.speech.ProfileBoundStreamingSpeechEngine
@@ -56,6 +58,7 @@ internal class ListenServiceHandleFactory(
     private val scope: CoroutineScope,
     private val onCoordinator: (AlertCoordinator) -> Unit,
     private val onQuestion: (ClassEvent, Long?, AppDatabase) -> Unit,
+    private val onStateChanged: (com.classsentinel.core.pipeline.PipelineState) -> Unit = LiveStreamBus::pushState,
 ) {
 
     suspend fun create(): ListenSessionHandle {
@@ -80,7 +83,7 @@ internal class ListenServiceHandleFactory(
         val pipeline = StreamingListenPipeline(
             streamer = AudioStreamer(context = context),
             speech = speech,
-            onStateChanged = LiveStreamBus::pushState,
+            onStateChanged = onStateChanged,
         )
         val eventEngine = EventEngine(NameMatcher(AppConfig.names), AppConfig.sensitivity)
         val alert = AlertCoordinator(
@@ -126,27 +129,28 @@ internal class ListenServiceHandleFactory(
 
 private suspend fun createRuntimeAsrEngine(
     context: Context,
-): ProfileBoundStreamingSpeechEngine = ProductionAsrEngineStarter(
+): ProfileBoundStreamingSpeechEngine = createRuntimeAsrEngine(
     prepareDirectory = {
-        withContext(Dispatchers.IO) {
-            SherpaModelInstaller(
-                filesDir = context.applicationContext.filesDir,
-                profile = ModelProfiles.PRODUCTION,
-                assetOpener = context.applicationContext.assets::open,
-            ).install()
+        val root = context.applicationContext.filesDir
+        check(ModelReadinessChecker(root).ensureReady(ModelProfiles.PRODUCTION, context.applicationContext.assets::open)) {
+            "ASR_MODEL_NOT_READY"
         }
+        ModelIntegrityVerifier.resolveTargetDirectory(root, ModelProfiles.PRODUCTION)
     },
-    initializeModel = { directory ->
-        withContext(Dispatchers.IO) {
-            val recognizer = SherpaOnnxRecognizerFactory.create(directory, ModelProfiles.PRODUCTION)
-            try {
-                // Preflight native construction before the live stream starts.
-            } finally {
-                recognizer.release()
-            }
-        }
+    recognizerFactory = { SherpaOnnxRecognizerFactory.create(it, ModelProfiles.PRODUCTION) },
+)
+
+internal suspend fun createRuntimeAsrEngine(
+    prepareDirectory: suspend () -> File,
+    recognizerFactory: (File) -> SherpaOnlineRecognizerPort,
+): ProfileBoundStreamingSpeechEngine = ProductionAsrEngineStarter(
+    prepareDirectory = prepareDirectory,
+    createEngine = { directory ->
+        SherpaOnnxStreamingEngine(
+            profile = ModelProfiles.PRODUCTION,
+            recognizerFactory = { recognizerFactory(directory) },
+        )
     },
-    createEngine = ::createLiveStreamingSpeechEngine,
 ).create()
 
 /**
@@ -341,7 +345,6 @@ internal class SessionPipelineAdapter(
         // 只有 transcript 真正落库后才发布“最近一句”资格；final 文本已由 event collector
         // 推入 LiveBus，这里不能再次 pushSegment，否则每句 final 会在实时页面重复一次。
         chunkId?.let { LiveStreamBus.pushLatestChunk(courseId, it) }
-        LiveStreamBus.pushState(pipeline.state.value)
         // 事件时间与 final 一致；事件上下文为当前段之前的滚动课堂上下文
         // 加上当前 final，供详情与 AnswerService 使用。
         val contextBeforeCurrent = contextBuffer.contextAt(chunkTs)

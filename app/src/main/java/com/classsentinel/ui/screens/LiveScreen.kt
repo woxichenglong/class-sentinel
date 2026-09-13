@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.classsentinel.core.detect.PersonalizedNameTargetEvent
 import com.classsentinel.core.llm.AnswerResult
 import com.classsentinel.core.llm.answerFailureMessage
 import com.classsentinel.core.pipeline.PipelineState
@@ -55,6 +56,11 @@ internal fun liveTranscriptDisplay(lines: List<LiveTranscriptLine>): List<String
         }
     }
 
+internal fun liveTranscriptKey(line: LiveTranscriptLine): Int = line.utteranceId
+
+internal fun suspectedNameTargetWarning(event: PersonalizedNameTargetEvent): String =
+    "可能叫到「${event.targetName}」，请留意"
+
 internal fun liveAnswerLabel(answer: LiveAnswerState): String = when (val result = answer.result) {
     AnswerResult.Generating -> "正在生成答案…"
     is AnswerResult.Streaming -> result.text
@@ -71,7 +77,9 @@ fun LiveScreen() {
     val latestAnswer by LiveStreamBus.latestAnswer.collectAsState()
     val pipelineState by LiveStreamBus.pipelineState.collectAsState()
     val historyDegraded by LiveStreamBus.historyDegraded.collectAsState()
+    val suspectedNameTarget by LiveStreamBus.suspectedNameTarget.collectAsState()
     val primaryAction = livePrimaryActionUi(pipelineState)
+    val controls = rememberListeningControls()
     val sessionActive = pipelineState.isSessionActive()
 
     LazyColumn(
@@ -133,8 +141,8 @@ fun LiveScreen() {
                         },
                     )
                     Button(
-                        onClick = { performLivePrimaryAction(context, primaryAction.action) },
-                        enabled = primaryAction.enabled,
+                        onClick = { performLivePrimaryAction(context, primaryAction.action, controls.requestStart) },
+                        enabled = primaryAction.enabled && !controls.preparing,
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
                         colors = ButtonDefaults.buttonColors(
@@ -142,7 +150,7 @@ fun LiveScreen() {
                             contentColor = MaterialTheme.colorScheme.onPrimary,
                         ),
                     ) {
-                        Text(primaryAction.label, style = MaterialTheme.typography.titleMedium)
+                        Text(if (controls.preparing) "准备监听…" else primaryAction.label, style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -157,6 +165,35 @@ fun LiveScreen() {
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                }
+            }
+        }
+
+        suspectedNameTarget?.let { target ->
+            item {
+                AuroraCard(containerColor = MaterialTheme.colorScheme.tertiaryContainer) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(ClassSentinelSpacing.md),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.xs),
+                        ) {
+                            Text("疑似点名", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                suspectedNameTargetWarning(target),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                        TextButton(onClick = LiveStreamBus::clearSuspectedNameTarget) {
+                            Text("知道了")
+                        }
+                    }
                 }
             }
         }
@@ -222,7 +259,7 @@ fun LiveScreen() {
         } else {
             items(
                 items = transcript.asReversed(),
-                key = { line -> "${line.utteranceId}-${line.text}-${line.hashCode()}" },
+                key = ::liveTranscriptKey,
             ) { line ->
                 AuroraCard(
                     containerColor = if (line is LiveTranscriptLine.Partial) {

@@ -178,6 +178,33 @@ class AnswerResultTest {
     }
 
     @Test
+    fun `regular deltas may exceed the first byte timeout cumulatively`() = runTest {
+        val states = answerResults(
+            question = "问题",
+            deltas = flow {
+                delay(700L)
+                emit("持续")
+                delay(700L)
+                emit("输出")
+            },
+            timeoutMs = 2_000L,
+            firstDeltaTimeoutMs = 1_000L,
+            idleTimeoutMs = 1_000L,
+            streamOutput = true,
+        ).toList()
+
+        assertEquals(
+            listOf(
+                AnswerResult.Generating,
+                AnswerResult.Streaming("持续"),
+                AnswerResult.Streaming("持续输出"),
+                AnswerResult.Succeeded("持续输出"),
+            ),
+            states,
+        )
+    }
+
+    @Test
     fun `typed llm errors retain only their safe category`() = runTest {
         LlmError.Kind.values().forEach { kind ->
             val states = answerResults(

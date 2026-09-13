@@ -200,6 +200,10 @@ object LiveStreamBus {
         }
     }
 
+    fun clearSuspectedNameTarget() {
+        _suspectedNameTarget.value = null
+    }
+
     fun pushState(state: PipelineState) {
         pipelineState.value = state
     }

@@ -270,7 +270,10 @@ fun SettingsHubScreen() {
                     showClearDialog = false
                     scope.launch {
                         try {
-                            clearMessage = "已清空 ${answerHistory.clearHistory()} 条问答"
+                            val cleared = clearHistoryIfConfirmed(confirmed = true) {
+                                answerHistory.clearHistory()
+                            }
+                            clearMessage = "已清空 ${cleared ?: 0} 条问答"
                         } catch (e: CancellationException) {
                             throw e
                         } catch (_: Exception) {
@@ -876,3 +879,11 @@ private fun hubAiSettingsValidationMessage(code: String): String = when (code) {
     "MODEL_BLANK" -> "模型不能为空"
     else -> "请检查 Base URL 和模型"
 }
+
+internal fun defaultAiSettingsForUi(): AiSettings = SettingsRepository.DEFAULT_AI_SETTINGS
+
+/** Only execute the destructive action after an explicit confirmation. */
+internal suspend fun <T> clearHistoryIfConfirmed(
+    confirmed: Boolean,
+    clear: suspend () -> T,
+): T? = if (confirmed) clear() else null

@@ -65,6 +65,10 @@ class ListenService : Service() {
     private var serviceSession: ListenServiceSession? = null
     /** 前台通知状态收集协程；随服务销毁一并取消 */
     private var notificationJob: Job? = null
+    private var recordingRequested = false
+    private var lastStartId = 0
+    private val pipelineStateLock = Any()
+    @Volatile private var terminalError: PipelineState.Error? = null
     /** Monotonic in-memory identity for answers whose event insert did not return a DB id. */
     private val transientAnswerSequence = AtomicLong(0L)
     private val answerResultHandler = AnswerResultHandler(
@@ -123,6 +127,7 @@ class ListenService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         when (intent?.action) {
             ACTION_RETRY -> {
                 val eventId = intent.getLongExtra(EXTRA_EVENT_ID, -1L)
@@ -145,6 +150,8 @@ class ListenService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_START -> {
+                if (recordingRequested) return START_NOT_STICKY
+                recordingRequested = true
                 // 先把“启动中”发布给首页和前台通知；否则通知会在真正创建课程/管线前
                 // 读取到初始 Idle，用户会误以为引擎根本没有开启。
                 LiveStreamBus.pushState(PipelineState.Starting)
@@ -169,16 +176,19 @@ class ListenService : Service() {
                 scope = scope,
                 onCoordinator = { coordinator = it },
                 onQuestion = { event, eventId, _ -> automaticAnswerDispatcher.dispatch(event, eventId) },
+                onStateChanged = ::onPipelineStateChanged,
             ).create()
         },
         stopSelfResult = { id -> stopSelfResult(id) },
         onStartFailure = {
-            LiveStreamBus.pushState(PipelineState.Error("监听启动失败"))
+            terminalError = PipelineState.Error("监听启动失败")
+            LiveStreamBus.pushState(terminalError!!)
             stopSelf()
         },
     )
 
     override fun onDestroy() {
+        recordingRequested = false
         notificationJob?.cancel()
         notificationJob = null
         coordinator?.close()
@@ -186,9 +196,23 @@ class ListenService : Service() {
         // onDestroy 不保证还能完成 Room 收尾；先释放进程内 UI 资格，数据库由启动时
         // 的 stale-course recovery 按超时规则兜底，避免首页永久显示“可停止”假会话。
         LiveStreamBus.activeCourseId.value?.let { LiveStreamBus.finishCourse(it) }
-        LiveStreamBus.pushState(PipelineState.Idle)
+        LiveStreamBus.pushState(terminalError ?: PipelineState.Idle)
         scope.cancel()
         super.onDestroy()
+    }
+
+    internal fun onPipelineStateChanged(state: PipelineState) {
+        synchronized(pipelineStateLock) {
+            if (terminalError != null) return
+            if (state !is PipelineState.Error) {
+                LiveStreamBus.pushState(state)
+                return
+            }
+            terminalError = PipelineState.Error("转写中断")
+            // Do not offer START until the old controller has released/finalized its course.
+            LiveStreamBus.pushState(PipelineState.Stopping)
+        }
+        serviceSession?.stop(lastStartId)
     }
 
     /** LLM 流式答题：coordinator 去重，结果更新原 event ID 与答案通知。 */

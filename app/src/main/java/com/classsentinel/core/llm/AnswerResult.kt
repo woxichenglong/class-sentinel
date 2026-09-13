@@ -1,9 +1,12 @@
 package com.classsentinel.core.llm
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Observable, privacy-safe answer generation state. */
@@ -47,39 +50,46 @@ internal fun answerFailureMessage(safeCode: String): String = when (safeCode) {
     else -> "生成失败"
 }
 
-/** Collects one answer stream into a bounded, observable terminal result. */
+/** Collects one answer stream with independent first-delta, idle, and total deadlines. */
 fun answerResults(
     question: String,
     deltas: Flow<String>,
-    timeoutMs: Long = 5_000L,
+    timeoutMs: Long = 30_000L,
+    firstDeltaTimeoutMs: Long = 8_000L,
+    idleTimeoutMs: Long = 8_000L,
     streamOutput: Boolean = false,
 ): Flow<AnswerResult> = flow {
     require(timeoutMs > 0L) { "timeoutMs must be positive" }
+    require(firstDeltaTimeoutMs > 0L) { "firstDeltaTimeoutMs must be positive" }
+    require(idleTimeoutMs > 0L) { "idleTimeoutMs must be positive" }
     emit(AnswerResult.Generating)
     try {
-        val answer = withTimeoutOrNull(timeoutMs) {
-            buildString {
-                deltas.collect {
-                    append(it)
-                    if (streamOutput) {
-                        val textSoFar = toString()
-                        val normalized = textSoFar.trim()
-                        if (normalized.isNotBlank() &&
-                            normalized != INSUFFICIENT_ANSWER_SENTINEL &&
-                            !INSUFFICIENT_ANSWER_SENTINEL.startsWith(normalized)
-                        ) {
-                            emit(AnswerResult.Streaming(textSoFar))
+        val outcome = coroutineScope {
+            val channel = deltas.filter(String::isNotEmpty).produceIn(this)
+            try {
+                withTimeoutOrNull(timeoutMs) {
+                    collectAnswer(channel, firstDeltaTimeoutMs, idleTimeoutMs) { textSoFar ->
+                        if (streamOutput) {
+                            val normalized = textSoFar.trim()
+                            if (normalized.isNotBlank() &&
+                                normalized != INSUFFICIENT_ANSWER_SENTINEL &&
+                                !INSUFFICIENT_ANSWER_SENTINEL.startsWith(normalized)
+                            ) {
+                                emit(AnswerResult.Streaming(textSoFar))
+                            }
                         }
                     }
-                }
-            }.trim()
+                } ?: CollectedAnswer.TimedOut
+            } finally {
+                channel.cancel()
+            }
         }
-        if (answer == null) {
+        if (outcome is CollectedAnswer.TimedOut) {
             emit(AnswerResult.Failed("LLM_TIMEOUT"))
-        } else if (answer.isBlank() || answer == INSUFFICIENT_ANSWER_SENTINEL) {
+        } else if (outcome.answer.isBlank() || outcome.answer == INSUFFICIENT_ANSWER_SENTINEL) {
             emit(AnswerResult.Insufficient(question))
         } else {
-            emit(AnswerResult.Succeeded(answer))
+            emit(AnswerResult.Succeeded(outcome.answer))
         }
     } catch (e: CancellationException) {
         throw e
@@ -87,5 +97,34 @@ fun answerResults(
         emit(AnswerResult.Failed(e.error.safeCode))
     } catch (_: Exception) {
         emit(AnswerResult.Failed("LLM_REQUEST"))
+    }
+}
+
+private sealed interface CollectedAnswer {
+    val answer: String
+
+    data class Completed(override val answer: String) : CollectedAnswer
+    data object TimedOut : CollectedAnswer {
+        override val answer: String = ""
+    }
+}
+
+private suspend fun collectAnswer(
+    channel: ReceiveChannel<String>,
+    firstDeltaTimeoutMs: Long,
+    idleTimeoutMs: Long,
+    onDelta: suspend (String) -> Unit,
+): CollectedAnswer {
+    val answer = StringBuilder()
+    var firstDelta = true
+    while (true) {
+        val next = withTimeoutOrNull(if (firstDelta) firstDeltaTimeoutMs else idleTimeoutMs) {
+            channel.receiveCatching()
+        } ?: return CollectedAnswer.TimedOut
+        next.exceptionOrNull()?.let { throw it }
+        if (next.isClosed) return CollectedAnswer.Completed(answer.toString().trim())
+        answer.append(next.getOrThrow())
+        firstDelta = false
+        onDelta(answer.toString())
     }
 }

@@ -1,7 +1,7 @@
 package com.classsentinel.data
 
 /**
- * SettingsScreen 的可见设置与生产消费者登记表。
+ * SettingsHubScreen 的可见设置与生产消费者登记表。
  *
  * 新增可见设置时必须同时登记 key 和消费者；[SettingConsumerMatrixTest] 会阻止
  * “能保存但没有任何运行时效果”的设置进入版本。

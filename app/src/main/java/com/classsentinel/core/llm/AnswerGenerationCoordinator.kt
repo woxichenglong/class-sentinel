@@ -32,7 +32,9 @@ internal class AnswerGenerationCoordinator(
     private val scope: CoroutineScope,
     private val generate: (AnswerRequest) -> Flow<String>,
     private val onResult: suspend (AnswerRequest, AnswerResult) -> Unit,
-    private val timeoutMs: Long = 5_000L,
+    private val firstDeltaTimeoutMs: Long = 8_000L,
+    private val idleTimeoutMs: Long = 8_000L,
+    private val totalTimeoutMs: Long = 30_000L,
 ) {
     private val lock = Any()
     private val jobs = mutableMapOf<String, Job>()
@@ -45,7 +47,9 @@ internal class AnswerGenerationCoordinator(
                     answerResults(
                         question = request.question,
                         deltas = generate(request),
-                        timeoutMs = timeoutMs,
+                        timeoutMs = totalTimeoutMs,
+                        firstDeltaTimeoutMs = firstDeltaTimeoutMs,
+                        idleTimeoutMs = idleTimeoutMs,
                         streamOutput = request.streamOutput,
                     ).collect { result ->
                         onResult(request, result)

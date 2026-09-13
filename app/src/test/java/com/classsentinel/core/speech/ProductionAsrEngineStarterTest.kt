@@ -13,11 +13,11 @@ import org.junit.Test
 class ProductionAsrEngineStarterTest {
 
     @Test
-    fun `X ASR initialization failure propagates without trying another engine`() {
+    fun `X ASR preparation failure propagates without creating an engine`() {
         val calls = mutableListOf<String>()
         val failure = IllegalStateException("synthetic init failure")
         val starter = starter(calls) {
-            calls += "initialize"
+            calls += "verify"
             throw failure
         }
 
@@ -26,7 +26,7 @@ class ProductionAsrEngineStarterTest {
         }
 
         assertSame(failure, thrown)
-        assertEquals(listOf("prepare", "initialize"), calls)
+        assertEquals(listOf("prepare", "verify"), calls)
     }
 
     @Test
@@ -34,7 +34,7 @@ class ProductionAsrEngineStarterTest {
         val cancellation = CancellationException("synthetic cancellation")
         val calls = mutableListOf<String>()
         val starter = starter(calls) {
-            calls += "initialize"
+            calls += "verify"
             throw cancellation
         }
 
@@ -43,18 +43,18 @@ class ProductionAsrEngineStarterTest {
         }
 
         assertSame(cancellation, thrown)
-        assertEquals(listOf("prepare", "initialize"), calls)
+        assertEquals(listOf("prepare", "verify"), calls)
     }
 
     private fun starter(
         calls: MutableList<String>,
-        initialize: suspend (File) -> Unit,
+        prepare: suspend () -> Unit,
     ): ProductionAsrEngineStarter = ProductionAsrEngineStarter(
         prepareDirectory = {
             calls += "prepare"
+            prepare()
             File("build/production-asr-starter")
         },
-        initializeModel = initialize,
         createEngine = {
             calls += "create"
             object : ProfileBoundStreamingSpeechEngine {

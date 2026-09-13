@@ -29,9 +29,9 @@ internal fun livePrimaryActionUi(state: PipelineState): LivePrimaryActionUi = wh
     PipelineState.Stopping -> LivePrimaryActionUi("正在停止…", LivePrimaryAction.DISABLED, enabled = false)
 }
 
-internal fun performLivePrimaryAction(context: Context, action: LivePrimaryAction) {
+internal fun performLivePrimaryAction(context: Context, action: LivePrimaryAction, requestStart: () -> Unit) {
     when (action) {
-        LivePrimaryAction.START -> ListenService.start(context)
+        LivePrimaryAction.START -> requestStart()
         LivePrimaryAction.STOP -> ListenService.stop(context)
         LivePrimaryAction.DISABLED -> Unit
     }
