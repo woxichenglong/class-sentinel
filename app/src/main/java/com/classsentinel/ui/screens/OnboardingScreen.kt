@@ -61,6 +61,7 @@ import com.classsentinel.ui.initialOnboardingStep
 import com.classsentinel.ui.isAiSettingsComplete
 import com.classsentinel.ui.prepareOnboardingName
 import com.classsentinel.ui.saveAndCheckAi
+import com.classsentinel.ui.toAiSetupState
 import com.classsentinel.ui.AI_NAME_VOICE_PRIVACY_NOTICE
 import com.classsentinel.ui.components.AuroraCard
 import com.classsentinel.ui.components.ScreenHeader
@@ -302,7 +303,9 @@ private fun StepAiConfig(
     var state by remember(initialSettings) { mutableStateOf(initialAiSetupState(initialSettings)) }
 
     fun markEditing() {
-        if (state !is AiSetupState.Checking) state = AiSetupState.Editing
+        if (state !is AiSetupState.Checking && state !is AiSetupState.Retrying) {
+            state = AiSetupState.Editing
+        }
     }
 
     Text("配置 AI 服务（可选）", style = MaterialTheme.typography.titleLarge)
@@ -378,9 +381,14 @@ private fun StepAiConfig(
                 Text("正在检查 AI 连接…")
             }
         }
+        is AiSetupState.Retrying -> Text(
+            "正在重试（第 ${current.attempt}/${current.maxAttempts} 次）：" +
+                aiSetupFailureMessage(current.reason),
+        )
         AiSetupState.Ready -> Text("AI 已准备好，将在姓名页启用自动生成")
         is AiSetupState.Failed -> Text(
-            aiSetupFailureMessage(current.reason),
+            aiSetupFailureMessage(current.reason) +
+                if (current.attempts > 1) "（已尝试 ${current.attempts} 次）" else "",
             color = MaterialTheme.colorScheme.error,
         )
     }
@@ -393,12 +401,13 @@ private fun StepAiConfig(
                     draft = AiSettings(baseUrl = baseUrl, apiKey = apiKey, model = model),
                     save = settings::saveAiSettings,
                     checker = checker,
+                    onConnectivityState = { progress -> state = progress.toAiSetupState() },
                 )
                 state = result
                 if (result is AiSetupState.Ready) onReady()
             }
         },
-        enabled = state !is AiSetupState.Checking,
+        enabled = state !is AiSetupState.Checking && state !is AiSetupState.Retrying,
         modifier = Modifier.fillMaxWidth(),
     ) { Text("保存并检查 AI") }
     TextButton(

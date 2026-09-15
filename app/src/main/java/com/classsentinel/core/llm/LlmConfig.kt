@@ -11,4 +11,6 @@ data class LlmConfig(
     val maxTokens: Int? = null,
     /** 请求 provider 以 JSON object 作为结构化输出；普通回答保持 null/false。 */
     val responseFormatJsonObject: Boolean = false,
+    /** Optional per-call transport deadline; connectivity probes bind this to their policy. */
+    val callTimeoutMs: Long? = null,
 )

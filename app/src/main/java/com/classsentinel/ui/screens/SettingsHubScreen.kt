@@ -61,7 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.detect.NameEntry
+import com.classsentinel.core.llm.AiConnectivityChecker
 import com.classsentinel.core.llm.AiProviderPreset
+import com.classsentinel.core.llm.LlmAiConnectivityChecker
 import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.data.AiSettings
 import com.classsentinel.data.AnswerHistoryRepository
@@ -72,6 +74,10 @@ import com.classsentinel.data.SettingsRepositoryHolder
 import com.classsentinel.ui.components.AuroraCard
 import com.classsentinel.ui.components.ScreenHeader
 import com.classsentinel.ui.components.SettingsRow
+import com.classsentinel.ui.AiSetupState
+import com.classsentinel.ui.aiSetupFailureMessage
+import com.classsentinel.ui.saveAndCheckAi
+import com.classsentinel.ui.toAiSetupState
 import com.classsentinel.ui.theme.ClassSentinelSpacing
 import com.classsentinel.worker.AsrSettingsActionCoordinator
 import kotlinx.coroutines.CancellationException
@@ -117,6 +123,7 @@ fun SettingsHubScreen() {
     val darkMode by repo.darkModeFlow.collectAsState(initial = "system")
     val asrEngine by repo.asrEngineFlow.collectAsState(initial = "telespeech")
     val asrActions = remember(context, repo) { AsrSettingsActionCoordinator.create(context, repo) }
+    val aiConnectivityChecker = remember { LlmAiConnectivityChecker() }
 
     var pageName by rememberSaveable { mutableStateOf(SettingsHubPage.OVERVIEW.name) }
     val page = runCatching { SettingsHubPage.valueOf(pageName) }.getOrDefault(SettingsHubPage.OVERVIEW)
@@ -203,6 +210,7 @@ fun SettingsHubScreen() {
                 answerStyle = answerStyle,
                 streamOutput = streamOutput,
                 answerTriggerMode = answerTriggerMode,
+                checker = aiConnectivityChecker,
                 save = ::saveSnap,
                 onBack = { pageName = SettingsHubPage.OVERVIEW.name },
             )
@@ -581,15 +589,24 @@ private fun SettingsAiPage(
     answerStyle: String,
     streamOutput: Boolean,
     answerTriggerMode: AnswerTriggerMode,
+    checker: AiConnectivityChecker,
     save: (((suspend () -> Unit)) -> Unit),
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    val settings = remember { SettingsRepositoryHolder.get(context) }
+    val scope = rememberCoroutineScope()
     var baseUrl by remember(ai.baseUrl) { mutableStateOf(ai.baseUrl) }
     var apiKey by remember(ai.apiKey) { mutableStateOf(ai.apiKey) }
     var model by remember(ai.model) { mutableStateOf(ai.model) }
     var visible by remember { mutableStateOf(false) }
-    var message by rememberSaveable { mutableStateOf<String?>(null) }
+    var connectionState by remember { mutableStateOf<AiSetupState>(AiSetupState.Unconfigured) }
+
+    fun markEditing() {
+        if (connectionState !is AiSetupState.Checking && connectionState !is AiSetupState.Retrying) {
+            connectionState = AiSetupState.Editing
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -599,10 +616,16 @@ private fun SettingsAiPage(
         item { SettingsSubpageHeader("AI 答题", "AI 只在触发条件满足后生成回答；设置本身不会改变监听。", onBack) }
         item {
             SettingsCard("服务连接") {
-                OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    baseUrl,
+                    { baseUrl = it; markEditing() },
+                    label = { Text("Base URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 OutlinedTextField(
                     value = apiKey,
-                    onValueChange = { apiKey = it },
+                    onValueChange = { apiKey = it; markEditing() },
                     label = { Text("API Key") },
                     singleLine = true,
                     visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -616,29 +639,73 @@ private fun SettingsAiPage(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(model, { model = it }, label = { Text("模型") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    model,
+                    { model = it; markEditing() },
+                    label = { Text("模型") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(ClassSentinelSpacing.xs)) {
-                    OutlinedButton(onClick = { baseUrl = AiProviderPreset.DEEPSEEK_OFFICIAL.baseUrl; model = AiProviderPreset.DEEPSEEK_OFFICIAL.model }, modifier = Modifier.weight(1f)) { Text("DeepSeek") }
-                    OutlinedButton(onClick = { baseUrl = AiProviderPreset.SILICON_FLOW.baseUrl; model = AiProviderPreset.SILICON_FLOW.model }, modifier = Modifier.weight(1f)) { Text("硅基") }
-                    OutlinedButton(onClick = { baseUrl = AiProviderPreset.COMMAND_CODE.baseUrl; model = AiProviderPreset.COMMAND_CODE.model }, modifier = Modifier.weight(1f)) { Text("Command") }
+                    OutlinedButton(
+                        onClick = {
+                            baseUrl = AiProviderPreset.DEEPSEEK_OFFICIAL.baseUrl
+                            model = AiProviderPreset.DEEPSEEK_OFFICIAL.model
+                            markEditing()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("DeepSeek") }
+                    OutlinedButton(
+                        onClick = {
+                            baseUrl = AiProviderPreset.SILICON_FLOW.baseUrl
+                            model = AiProviderPreset.SILICON_FLOW.model
+                            markEditing()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("硅基") }
+                    OutlinedButton(
+                        onClick = {
+                            baseUrl = AiProviderPreset.COMMAND_CODE.baseUrl
+                            model = AiProviderPreset.COMMAND_CODE.model
+                            markEditing()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Command") }
+                }
+                when (val current = connectionState) {
+                    AiSetupState.Unconfigured -> Text("尚未验证 AI 配置")
+                    AiSetupState.Editing -> Text("保存时会发送一次最小真实推理请求，确认模型可用")
+                    AiSetupState.Checking -> Text("正在检查 AI 模型…")
+                    is AiSetupState.Retrying -> Text(
+                        "正在重试（第 ${current.attempt}/${current.maxAttempts} 次）：" +
+                            aiSetupFailureMessage(current.reason),
+                    )
+                    AiSetupState.Ready -> Text("AI 模型已验证可用")
+                    is AiSetupState.Failed -> Text(
+                        aiSetupFailureMessage(current.reason) +
+                            if (current.attempts > 1) "（已尝试 ${current.attempts} 次）" else "",
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
                 Button(
                     onClick = {
-                        val error = AiProviderPreset.validationError(baseUrl, model)
-                        if (error == null) {
-                            save {
-                                SettingsRepositoryHolder.get(context).saveAiSettings(
-                                    AiProviderPreset.normalizeSettings(AiSettings(baseUrl, apiKey, model)),
-                                )
-                                message = "AI 配置已保存"
-                            }
-                        } else {
-                            message = hubAiSettingsValidationMessage(error)
+                        connectionState = AiSetupState.Checking
+                        scope.launch {
+                            val result = saveAndCheckAi(
+                                draft = AiSettings(baseUrl, apiKey, model),
+                                save = settings::saveAiSettings,
+                                checker = checker,
+                                onConnectivityState = { progress ->
+                                    connectionState = progress.toAiSetupState()
+                                },
+                            )
+                            connectionState = result
                         }
                     },
+                    enabled = connectionState !is AiSetupState.Checking &&
+                        connectionState !is AiSetupState.Retrying,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("保存 AI 配置") }
-                message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                ) { Text("保存并检查 AI") }
             }
         }
         item {
@@ -874,11 +941,6 @@ private fun hubLevelLabel(level: Int): String = when (level) {
     else -> "多（3级）"
 }
 
-private fun hubAiSettingsValidationMessage(code: String): String = when (code) {
-    "BASE_URL_HTTPS_REQUIRED" -> "Base URL 必须使用 https://"
-    "MODEL_BLANK" -> "模型不能为空"
-    else -> "请检查 Base URL 和模型"
-}
 
 internal fun defaultAiSettingsForUi(): AiSettings = SettingsRepository.DEFAULT_AI_SETTINGS
 

@@ -22,7 +22,12 @@ enum class NameVariantFailureCode {
     INVALID_INPUT,
     CONFIG,
     AUTH,
+    FORBIDDEN,
+    NOT_FOUND,
+    MODEL_UNSUPPORTED,
     RATE_LIMIT,
+    QUOTA_EXHAUSTED,
+    DNS,
     NETWORK,
     SERVER,
     TIMEOUT,
@@ -212,10 +217,17 @@ class LlmNameVariantGenerator(
 
 private fun LlmError.toFailureCode(): NameVariantFailureCode = when (kind) {
     LlmError.Kind.AUTH -> NameVariantFailureCode.AUTH
+    LlmError.Kind.FORBIDDEN -> NameVariantFailureCode.FORBIDDEN
+    LlmError.Kind.NOT_FOUND -> NameVariantFailureCode.NOT_FOUND
+    LlmError.Kind.MODEL_UNSUPPORTED -> NameVariantFailureCode.MODEL_UNSUPPORTED
     LlmError.Kind.CONFIG -> NameVariantFailureCode.CONFIG
     LlmError.Kind.RATE_LIMIT -> NameVariantFailureCode.RATE_LIMIT
+    LlmError.Kind.QUOTA_EXHAUSTED -> NameVariantFailureCode.QUOTA_EXHAUSTED
+    LlmError.Kind.DNS -> NameVariantFailureCode.DNS
     LlmError.Kind.NETWORK -> NameVariantFailureCode.NETWORK
+    LlmError.Kind.TIMEOUT -> NameVariantFailureCode.TIMEOUT
     LlmError.Kind.SERVER -> NameVariantFailureCode.SERVER
     LlmError.Kind.EMPTY -> NameVariantFailureCode.EMPTY_RESPONSE
+    LlmError.Kind.INVALID_RESPONSE -> NameVariantFailureCode.INVALID_JSON
     LlmError.Kind.UNKNOWN -> NameVariantFailureCode.UNKNOWN
 }

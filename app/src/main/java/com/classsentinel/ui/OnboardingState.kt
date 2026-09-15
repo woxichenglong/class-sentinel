@@ -1,6 +1,7 @@
 package com.classsentinel.ui
 
 import com.classsentinel.core.llm.AiConnectivityChecker
+import com.classsentinel.core.llm.AiConnectivityCheckState
 import com.classsentinel.core.llm.AiConnectivityResult
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.AiSetupFailure
@@ -20,8 +21,17 @@ sealed interface AiSetupState {
     data object Unconfigured : AiSetupState
     data object Editing : AiSetupState
     data object Checking : AiSetupState
+    data class Retrying(
+        val attempt: Int,
+        val maxAttempts: Int,
+        val reason: AiSetupFailure,
+    ) : AiSetupState
     data object Ready : AiSetupState
-    data class Failed(val reason: AiSetupFailure) : AiSetupState
+    data class Failed(
+        val reason: AiSetupFailure,
+        val attempts: Int = 1,
+        val retryable: Boolean = reason.retryable,
+    ) : AiSetupState
 }
 
 internal const val AI_NAME_PRIVACY_NOTICE =
@@ -56,6 +66,7 @@ internal suspend fun saveAndCheckAi(
     draft: AiSettings,
     save: suspend (AiSettings) -> Unit,
     checker: AiConnectivityChecker,
+    onConnectivityState: (AiConnectivityCheckState) -> Unit = {},
 ): AiSetupState {
     val normalized = runCatching { AiProviderPreset.normalizeSettings(draft) }.getOrNull()
         ?: return AiSetupState.Failed(AiSetupFailure.CONFIG)
@@ -64,14 +75,18 @@ internal suspend fun saveAndCheckAi(
     }
 
     val connectivity = try {
-        checker.check(normalized)
+        checker.check(normalized, onConnectivityState)
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {
         return AiSetupState.Failed(AiSetupFailure.UNKNOWN)
     }
     if (connectivity is AiConnectivityResult.Failure) {
-        return AiSetupState.Failed(connectivity.reason)
+        return AiSetupState.Failed(
+            reason = connectivity.reason,
+            attempts = connectivity.attempts,
+            retryable = connectivity.retryable,
+        )
     }
 
     return try {
@@ -84,19 +99,44 @@ internal suspend fun saveAndCheckAi(
     }
 }
 
-internal fun canSkipAi(state: AiSetupState): Boolean = state !is AiSetupState.Checking
+internal fun canSkipAi(state: AiSetupState): Boolean =
+    state !is AiSetupState.Checking && state !is AiSetupState.Retrying
 
-internal fun nextStepAfterAiSetup(state: AiSetupState, skipped: Boolean): OnboardingStep? =
-    if (skipped || state !is AiSetupState.Checking) OnboardingStep.NameConfig else null
+internal fun nextStepAfterAiSetup(state: AiSetupState, skipped: Boolean): OnboardingStep? = when {
+    skipped -> OnboardingStep.NameConfig
+    state is AiSetupState.Ready -> OnboardingStep.NameConfig
+    else -> null
+}
 
 internal fun aiSetupFailureMessage(reason: AiSetupFailure): String = when (reason) {
     AiSetupFailure.CONFIG -> "AI 配置不完整，可暂时跳过"
-    AiSetupFailure.AUTH -> "AI 认证失败，可暂时跳过或检查 API Key"
-    AiSetupFailure.RATE_LIMIT -> "AI 服务暂时限流，可稍后重试或跳过"
-    AiSetupFailure.NETWORK -> "网络暂时不可用，可暂时跳过"
-    AiSetupFailure.SERVER -> "AI 服务暂时不可用，可稍后重试或跳过"
-    AiSetupFailure.TIMEOUT -> "AI 检查超时，可暂时跳过"
-    AiSetupFailure.INVALID_RESPONSE -> "AI 返回格式异常，可暂时跳过"
+    AiSetupFailure.AUTH -> "API Key 认证失败（HTTP 401），请检查 Key"
+    AiSetupFailure.FORBIDDEN -> "AI 服务拒绝访问（HTTP 403），请检查账户权限"
+    AiSetupFailure.NOT_FOUND -> "AI 接口不存在（HTTP 404），请检查 Base URL"
+    AiSetupFailure.MODEL_UNSUPPORTED -> "模型不存在或不受支持，请检查模型名"
+    AiSetupFailure.RATE_LIMIT -> "请求被限流（HTTP 429），稍后重试"
+    AiSetupFailure.QUOTA_EXHAUSTED -> "AI 额度已耗尽（HTTP 429），请充值或更换账户"
+    AiSetupFailure.DNS -> "无法解析 AI 服务域名（DNS），请检查网络或地址"
+    AiSetupFailure.NETWORK -> "网络连接异常，请检查网络后重试"
+    AiSetupFailure.SERVER -> "AI 服务异常（5xx），稍后重试"
+    AiSetupFailure.TIMEOUT -> "AI 请求超时，请稍后重试"
+    AiSetupFailure.INVALID_RESPONSE -> "模型返回格式异常，模型暂不可用"
     AiSetupFailure.SAVE_FAILED -> "AI 配置保存失败，请重试或暂时跳过"
-    AiSetupFailure.UNKNOWN -> "AI 配置检查失败，可暂时跳过"
+    AiSetupFailure.UNKNOWN -> "AI 检查发生未知错误，请重试或暂时跳过"
+}
+
+internal fun AiConnectivityCheckState.toAiSetupState(): AiSetupState = when (this) {
+    AiConnectivityCheckState.Idle -> AiSetupState.Editing
+    is AiConnectivityCheckState.Checking -> AiSetupState.Checking
+    is AiConnectivityCheckState.Retrying -> AiSetupState.Retrying(
+        attempt = attempt,
+        maxAttempts = maxAttempts,
+        reason = reason,
+    )
+    AiConnectivityCheckState.Ready -> AiSetupState.Ready
+    is AiConnectivityCheckState.Failed -> AiSetupState.Failed(
+        reason = reason,
+        attempts = attempts,
+        retryable = retryable,
+    )
 }

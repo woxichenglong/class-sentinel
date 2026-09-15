@@ -45,7 +45,7 @@ class LiveScreenStateTest {
             liveAnswerLabel(base.copy(result = AnswerResult.Streaming("答案进行中"))),
         )
         assertEquals(
-            "检查 AI 配置",
+            "API Key 认证失败（401），请检查配置",
             liveAnswerLabel(base.copy(result = AnswerResult.Failed("AUTH"))),
         )
         assertEquals(
@@ -57,7 +57,7 @@ class LiveScreenStateTest {
             liveAnswerLabel(base.copy(result = AnswerResult.Failed("RATE_LIMIT"))),
         )
         assertEquals(
-            "AI 服务暂时不可用",
+            "AI 服务异常（5xx），请稍后重试",
             liveAnswerLabel(base.copy(result = AnswerResult.Failed("SERVER"))),
         )
         assertEquals(

@@ -2,8 +2,13 @@ package com.classsentinel.core.llm
 
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import java.net.InetAddress
+import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
+import okhttp3.Dns
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -100,6 +105,122 @@ class LlmClientTest {
     }
 
     @Test
+    fun `401 is classified as authentication failure`() = runTest {
+        assertHttpError(401, "{\"error\":{\"code\":\"invalid_api_key\"}}", LlmError.Kind.AUTH)
+    }
+
+    @Test
+    fun `403 is classified as forbidden rather than authentication failure`() = runTest {
+        assertHttpError(403, "{\"error\":{\"code\":\"insufficient_scope\"}}", LlmError.Kind.FORBIDDEN)
+    }
+
+    @Test
+    fun `404 endpoint is classified as not found`() = runTest {
+        assertHttpError(404, "{\"detail\":\"route not found\"}", LlmError.Kind.NOT_FOUND)
+    }
+
+    @Test
+    fun `404 model error is classified as unsupported model`() = runTest {
+        assertHttpError(
+            404,
+            "{\"error\":{\"code\":\"model_not_found\",\"message\":\"model does not exist\"}}",
+            LlmError.Kind.MODEL_UNSUPPORTED,
+        )
+    }
+
+    @Test
+    fun `429 rate limit is distinct from quota exhaustion`() = runTest {
+        assertHttpError(
+            429,
+            "{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"too many requests\"}}",
+            LlmError.Kind.RATE_LIMIT,
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(429)
+                .setBody("{\"error\":{\"code\":\"insufficient_quota\",\"message\":\"quota exhausted\"}}"),
+        )
+        val quota = runCatching {
+            LlmClient().streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                cfg(),
+            ).toList()
+        }.exceptionOrNull()
+        assertTrue(quota is LlmException)
+        assertEquals(LlmError.Kind.QUOTA_EXHAUSTED, (quota as LlmException).error.kind)
+    }
+
+    @Test
+    fun `rate limit preserves a bounded retry after hint`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(429)
+                .addHeader("Retry-After", "3")
+                .setBody("{\"error\":{\"code\":\"rate_limit_exceeded\"}}"),
+        )
+        val err = runCatching {
+            LlmClient().streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                cfg(),
+            ).toList()
+        }.exceptionOrNull()
+
+        assertTrue(err is LlmException)
+        assertEquals(LlmError.Kind.RATE_LIMIT, (err as LlmException).error.kind)
+        assertEquals(3_000L, err.error.retryAfterMs)
+    }
+
+    @Test
+    fun `bad request naming an unsupported model is not generic config`() = runTest {
+        assertHttpError(
+            400,
+            "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"model not supported\"}}",
+            LlmError.Kind.MODEL_UNSUPPORTED,
+        )
+    }
+
+    @Test
+    fun `unknown host is classified as DNS`() = runTest {
+        val dnsClient = OkHttpClient.Builder()
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> =
+                    throw UnknownHostException("synthetic DNS failure")
+            })
+            .build()
+        val err = runCatching {
+            LlmClient(dnsClient).streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                LlmConfig("http://dns.test/v1", "sk-test", "gpt-4o-mini"),
+            ).toList()
+        }.exceptionOrNull()
+
+        assertTrue(err is LlmException)
+        assertEquals(LlmError.Kind.DNS, (err as LlmException).error.kind)
+    }
+
+    @Test
+    fun `socket timeout is classified as timeout`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("data: [DONE]\n\n")
+                .setBodyDelay(1, TimeUnit.SECONDS),
+        )
+        val timeoutClient = OkHttpClient.Builder()
+            .readTimeout(50, TimeUnit.MILLISECONDS)
+            .build()
+        val err = runCatching {
+            LlmClient(timeoutClient).streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                cfg(),
+            ).toList()
+        }.exceptionOrNull()
+
+        assertTrue(err is LlmException)
+        assertEquals(LlmError.Kind.TIMEOUT, (err as LlmException).error.kind)
+    }
+
+    @Test
     fun `OkHttp connection IOException is NETWORK`() = runTest {
         val err = runCatching {
             LlmClient().streamChat(
@@ -187,5 +308,19 @@ class LlmClientTest {
         val system = body.getJSONArray("messages").getJSONObject(0).getString("content")
         assertTrue(system.contains("要点化"))
         assertTrue(system.contains("200字"))
+    }
+
+    private suspend fun assertHttpError(status: Int, body: String, expected: LlmError.Kind) {
+        server.enqueue(MockResponse().setResponseCode(status).setBody(body))
+        val err = runCatching {
+            LlmClient().streamChat(
+                listOf(mapOf("role" to "user", "content" to "hi")),
+                cfg(),
+            ).toList()
+        }.exceptionOrNull()
+
+        assertTrue(err is LlmException)
+        assertEquals(expected, (err as LlmException).error.kind)
+        assertEquals(expected.name, err.message)
     }
 }

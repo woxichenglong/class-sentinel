@@ -107,6 +107,34 @@ class AiSetupStateTest {
     fun `privacy notice explicitly says the name leaves the device`() {
         assertTrue(AI_NAME_PRIVACY_NOTICE.contains("填写的姓名会发送给当前配置的 AI 服务"))
     }
+
+    @Test
+    fun `retrying is an active state and failed setup cannot advance unless skipped`() {
+        val retrying = AiSetupState.Retrying(
+            attempt = 2,
+            maxAttempts = 3,
+            reason = AiSetupFailure.NETWORK,
+        )
+
+        assertTrue(!canSkipAi(retrying))
+        assertEquals(
+            null,
+            nextStepAfterAiSetup(AiSetupState.Failed(AiSetupFailure.AUTH), skipped = false),
+        )
+    }
+
+    @Test
+    fun `user-facing setup messages distinguish every transport and provider category`() {
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.AUTH).contains("401"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.FORBIDDEN).contains("403"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.NOT_FOUND).contains("404"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.RATE_LIMIT).contains("限流"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.QUOTA_EXHAUSTED).contains("额度"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.DNS).contains("DNS"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.TIMEOUT).contains("超时"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.SERVER).contains("5xx"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.MODEL_UNSUPPORTED).contains("模型"))
+    }
 }
 
 private class FakeChecker(
