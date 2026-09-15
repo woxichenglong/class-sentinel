@@ -2,6 +2,7 @@ package com.classsentinel.ui
 
 import com.classsentinel.core.llm.AiConnectivityResult
 import com.classsentinel.core.llm.AiConnectivityChecker
+import com.classsentinel.core.llm.AiConnectionStatus
 import com.classsentinel.core.llm.AiSetupFailure
 import com.classsentinel.data.AiSettings
 import kotlinx.coroutines.test.runTest
@@ -32,15 +33,21 @@ class AiSetupStateTest {
 
     @Test
     fun `saved complete configuration and connectivity success becomes Ready`() = runTest {
-        var saved: AiSettings? = null
+        var draftSaved: AiSettings? = null
+        var verifiedSaved: AiSettings? = null
+        var savedStatus: AiConnectionStatus? = null
         val state = saveAndCheckAi(
             draft = completeSettings,
-            save = { saved = it },
+            save = { draftSaved = it },
             checker = FakeChecker(AiConnectivityResult.Success),
+            saveVerified = { verifiedSaved = it },
+            saveStatus = { savedStatus = it },
         )
 
         assertEquals(AiSetupState.Ready, state)
-        assertEquals(completeSettings, saved)
+        assertEquals(completeSettings, draftSaved)
+        assertEquals(completeSettings, verifiedSaved)
+        assertEquals(AiConnectionStatus.READY, savedStatus)
         assertEquals(
             OnboardingStep.NameConfig,
             nextStepAfterAiSetup(state, skipped = false),
@@ -48,23 +55,52 @@ class AiSetupStateTest {
     }
 
     @Test
-    fun `connectivity failure becomes Failed and skip still opens NameConfig`() = runTest {
-        var saved: AiSettings? = null
+    fun `transient connectivity failure saves unverified draft and keeps verified config`() = runTest {
+        var draftSaved: AiSettings? = null
+        var verified = completeSettings
+        var savedStatus: AiConnectionStatus? = null
         val state = saveAndCheckAi(
             draft = completeSettings,
-            save = { saved = it },
+            save = { draftSaved = it },
             checker = FakeChecker(AiConnectivityResult.Failure(AiSetupFailure.NETWORK)),
+            saveVerified = { verified = it },
+            saveStatus = { savedStatus = it },
         )
 
-        assertEquals(AiSetupState.Failed(AiSetupFailure.NETWORK), state)
-        assertNull(saved)
+        assertEquals(AiSetupState.Unverified(AiSetupFailure.NETWORK), state)
+        assertEquals(completeSettings, draftSaved)
+        assertEquals(completeSettings, verified)
+        assertEquals(AiConnectionStatus.UNVERIFIED, savedStatus)
         assertTrue(canSkipAi(state))
         assertEquals(OnboardingStep.NameConfig, nextStepAfterAiSetup(state, skipped = true))
     }
 
     @Test
-    fun `failed replacement draft preserves the previously saved AI configuration`() = runTest {
+    fun `rate limit and server failure both save draft without replacing verified config`() = runTest {
+        listOf(AiSetupFailure.RATE_LIMIT, AiSetupFailure.SERVER).forEach { reason ->
+            var draftSaved: AiSettings? = null
+            var verified = completeSettings
+            var savedStatus: AiConnectionStatus? = null
+            val state = saveAndCheckAi(
+                draft = completeSettings,
+                save = { draftSaved = it },
+                checker = FakeChecker(AiConnectivityResult.Failure(reason)),
+                saveVerified = { verified = it },
+                saveStatus = { savedStatus = it },
+            )
+
+            assertEquals(AiSetupState.Unverified(reason), state)
+            assertEquals(completeSettings, draftSaved)
+            assertEquals(completeSettings, verified)
+            assertEquals(AiConnectionStatus.UNVERIFIED, savedStatus)
+        }
+    }
+
+    @Test
+    fun `permanent auth failure saves draft but preserves the previously verified configuration`() = runTest {
         var persisted = completeSettings
+        var draftSaved: AiSettings? = null
+        var savedStatus: AiConnectionStatus? = null
         val replacement = AiSettings(
             baseUrl = "https://replacement.example.test/v1",
             apiKey = "replacement-test-key",
@@ -73,12 +109,37 @@ class AiSetupStateTest {
 
         val state = saveAndCheckAi(
             draft = replacement,
-            save = { persisted = it },
+            save = { draftSaved = it },
             checker = FakeChecker(AiConnectivityResult.Failure(AiSetupFailure.AUTH)),
+            saveVerified = { persisted = it },
+            saveStatus = { savedStatus = it },
         )
 
         assertEquals(AiSetupState.Failed(AiSetupFailure.AUTH), state)
+        assertEquals(replacement, draftSaved)
         assertEquals(completeSettings, persisted)
+        assertEquals(AiConnectionStatus.FAILED, savedStatus)
+    }
+
+    @Test
+    fun `capability failure becomes incompatible without discarding the draft`() = runTest {
+        var draftSaved: AiSettings? = null
+        var verified = completeSettings
+        var savedStatus: AiConnectionStatus? = null
+        val state = saveAndCheckAi(
+            draft = completeSettings,
+            save = { draftSaved = it },
+            checker = FakeChecker(
+                AiConnectivityResult.Failure(AiSetupFailure.CAPABILITY_UNSUPPORTED),
+            ),
+            saveVerified = { verified = it },
+            saveStatus = { savedStatus = it },
+        )
+
+        assertEquals(AiSetupState.Incompatible(AiSetupFailure.CAPABILITY_UNSUPPORTED), state)
+        assertEquals(completeSettings, draftSaved)
+        assertEquals(completeSettings, verified)
+        assertEquals(AiConnectionStatus.INCOMPATIBLE, savedStatus)
     }
 
     @Test
@@ -117,6 +178,8 @@ class AiSetupStateTest {
         )
 
         assertTrue(!canSkipAi(retrying))
+        assertTrue(!canSkipAi(AiSetupState.Connected))
+        assertTrue(!canSkipAi(AiSetupState.CapabilityChecking))
         assertEquals(
             null,
             nextStepAfterAiSetup(AiSetupState.Failed(AiSetupFailure.AUTH), skipped = false),
@@ -134,6 +197,17 @@ class AiSetupStateTest {
         assertTrue(aiSetupFailureMessage(AiSetupFailure.TIMEOUT).contains("超时"))
         assertTrue(aiSetupFailureMessage(AiSetupFailure.SERVER).contains("5xx"))
         assertTrue(aiSetupFailureMessage(AiSetupFailure.MODEL_UNSUPPORTED).contains("模型"))
+        assertTrue(aiSetupFailureMessage(AiSetupFailure.CAPABILITY_UNSUPPORTED).contains("能力"))
+        assertEquals("服务建议约 30 秒后再试", aiRetrySuggestion(30_000L))
+    }
+
+    @Test
+    fun `persisted connection status maps to explicit setup states`() {
+        assertEquals(AiSetupState.Connected, AiConnectionStatus.CONNECTED.toAiSetupState())
+        assertEquals(AiSetupState.Ready, AiConnectionStatus.READY.toAiSetupState())
+        assertEquals(AiSetupState.Unverified(), AiConnectionStatus.UNVERIFIED.toAiSetupState())
+        assertEquals(AiSetupState.Incompatible(), AiConnectionStatus.INCOMPATIBLE.toAiSetupState())
+        assertEquals(AiSetupState.Failed(AiSetupFailure.UNKNOWN), AiConnectionStatus.FAILED.toAiSetupState())
     }
 }
 

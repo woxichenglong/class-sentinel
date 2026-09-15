@@ -3,6 +3,7 @@ package com.classsentinel.ui
 import com.classsentinel.core.llm.AiConnectivityChecker
 import com.classsentinel.core.llm.AiConnectivityCheckState
 import com.classsentinel.core.llm.AiConnectivityResult
+import com.classsentinel.core.llm.AiConnectionStatus
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.AiSetupFailure
 import com.classsentinel.data.AiSettings
@@ -21,11 +22,19 @@ sealed interface AiSetupState {
     data object Unconfigured : AiSetupState
     data object Editing : AiSetupState
     data object Checking : AiSetupState
+    data object Connected : AiSetupState
+    data object CapabilityChecking : AiSetupState
     data class Retrying(
         val attempt: Int,
         val maxAttempts: Int,
         val reason: AiSetupFailure,
+        val retryAfterMs: Long? = null,
     ) : AiSetupState
+    data class Unverified(
+        val reason: AiSetupFailure? = null,
+        val retryAfterMs: Long? = null,
+    ) : AiSetupState
+    data class Incompatible(val reason: AiSetupFailure? = null) : AiSetupState
     data object Ready : AiSetupState
     data class Failed(
         val reason: AiSetupFailure,
@@ -43,8 +52,20 @@ internal const val AI_NAME_VOICE_PRIVACY_NOTICE =
 internal fun isAiSettingsComplete(settings: AiSettings): Boolean =
     settings.apiKey.trim().isNotEmpty() && AiProviderPreset.isValid(settings.baseUrl, settings.model)
 
-internal fun initialAiSetupState(settings: AiSettings): AiSetupState =
-    if (isAiSettingsComplete(settings)) AiSetupState.Ready else AiSetupState.Unconfigured
+internal fun initialAiSetupState(
+    settings: AiSettings,
+    status: AiConnectionStatus = AiConnectionStatus.UNVERIFIED,
+): AiSetupState = when (status) {
+    AiConnectionStatus.CONNECTED -> AiSetupState.Connected
+    AiConnectionStatus.READY -> AiSetupState.Ready
+    AiConnectionStatus.UNVERIFIED -> if (isAiSettingsComplete(settings)) {
+        AiSetupState.Editing
+    } else {
+        AiSetupState.Unconfigured
+    }
+    AiConnectionStatus.INCOMPATIBLE -> AiSetupState.Incompatible()
+    AiConnectionStatus.FAILED -> AiSetupState.Failed(AiSetupFailure.UNKNOWN)
+}
 
 /**
  * 按持久化事实恢复首启步骤：完成标记优先，其次是已保存姓名，再其次是完整 AI 配置。
@@ -67,10 +88,21 @@ internal suspend fun saveAndCheckAi(
     save: suspend (AiSettings) -> Unit,
     checker: AiConnectivityChecker,
     onConnectivityState: (AiConnectivityCheckState) -> Unit = {},
+    saveVerified: (suspend (AiSettings) -> Unit)? = null,
+    saveStatus: (suspend (AiConnectionStatus) -> Unit)? = null,
 ): AiSetupState {
     val normalized = runCatching { AiProviderPreset.normalizeSettings(draft) }.getOrNull()
         ?: return AiSetupState.Failed(AiSetupFailure.CONFIG)
-    if (normalized.apiKey.isBlank()) {
+    if (saveVerified != null) {
+        try {
+            save(normalized)
+            saveStatus?.invoke(AiConnectionStatus.UNVERIFIED)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return AiSetupState.Failed(AiSetupFailure.SAVE_FAILED)
+        }
+    } else if (normalized.apiKey.isBlank()) {
         return AiSetupState.Failed(AiSetupFailure.CONFIG)
     }
 
@@ -82,15 +114,26 @@ internal suspend fun saveAndCheckAi(
         return AiSetupState.Failed(AiSetupFailure.UNKNOWN)
     }
     if (connectivity is AiConnectivityResult.Failure) {
-        return AiSetupState.Failed(
-            reason = connectivity.reason,
-            attempts = connectivity.attempts,
-            retryable = connectivity.retryable,
-        )
+        if (saveVerified == null) {
+            return AiSetupState.Failed(
+                reason = connectivity.reason,
+                attempts = connectivity.attempts,
+                retryable = connectivity.retryable,
+            )
+        }
+        return try {
+            saveStatus?.invoke(connectivity.status)
+            connectivity.toAiSetupState()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            AiSetupState.Failed(AiSetupFailure.SAVE_FAILED)
+        }
     }
 
     return try {
-        save(normalized)
+        (saveVerified ?: save)(normalized)
+        if (saveVerified != null) saveStatus?.invoke(AiConnectionStatus.READY)
         AiSetupState.Ready
     } catch (e: CancellationException) {
         throw e
@@ -99,8 +142,14 @@ internal suspend fun saveAndCheckAi(
     }
 }
 
-internal fun canSkipAi(state: AiSetupState): Boolean =
-    state !is AiSetupState.Checking && state !is AiSetupState.Retrying
+internal fun canSkipAi(state: AiSetupState): Boolean = when (state) {
+    AiSetupState.Checking,
+    AiSetupState.Connected,
+    AiSetupState.CapabilityChecking,
+    is AiSetupState.Retrying,
+    -> false
+    else -> true
+}
 
 internal fun nextStepAfterAiSetup(state: AiSetupState, skipped: Boolean): OnboardingStep? = when {
     skipped -> OnboardingStep.NameConfig
@@ -114,6 +163,7 @@ internal fun aiSetupFailureMessage(reason: AiSetupFailure): String = when (reaso
     AiSetupFailure.FORBIDDEN -> "AI 服务拒绝访问（HTTP 403），请检查账户权限"
     AiSetupFailure.NOT_FOUND -> "AI 接口不存在（HTTP 404），请检查 Base URL"
     AiSetupFailure.MODEL_UNSUPPORTED -> "模型不存在或不受支持，请检查模型名"
+    AiSetupFailure.CAPABILITY_UNSUPPORTED -> "当前模型不支持 ClassSentinel 所需能力，请更换模型或服务"
     AiSetupFailure.RATE_LIMIT -> "请求被限流（HTTP 429），稍后重试"
     AiSetupFailure.QUOTA_EXHAUSTED -> "AI 额度已耗尽（HTTP 429），请充值或更换账户"
     AiSetupFailure.DNS -> "无法解析 AI 服务域名（DNS），请检查网络或地址"
@@ -125,14 +175,51 @@ internal fun aiSetupFailureMessage(reason: AiSetupFailure): String = when (reaso
     AiSetupFailure.UNKNOWN -> "AI 检查发生未知错误，请重试或暂时跳过"
 }
 
+internal fun aiRetrySuggestion(retryAfterMs: Long?): String? = retryAfterMs?.let { delayMs ->
+    val seconds = ((delayMs + 999L) / 1_000L).coerceAtLeast(1L)
+    "服务建议约 ${seconds} 秒后再试"
+}
+
+internal fun AiConnectionStatus.toAiSetupState(): AiSetupState = when (this) {
+    AiConnectionStatus.CONNECTED -> AiSetupState.Connected
+    AiConnectionStatus.READY -> AiSetupState.Ready
+    AiConnectionStatus.UNVERIFIED -> AiSetupState.Unverified()
+    AiConnectionStatus.INCOMPATIBLE -> AiSetupState.Incompatible()
+    AiConnectionStatus.FAILED -> AiSetupState.Failed(AiSetupFailure.UNKNOWN)
+}
+
+internal fun AiConnectivityResult.toAiSetupState(): AiSetupState = when (this) {
+    AiConnectivityResult.Success -> AiSetupState.Ready
+    is AiConnectivityResult.Failure -> when (status) {
+        AiConnectionStatus.UNVERIFIED -> AiSetupState.Unverified(
+            reason = reason,
+            retryAfterMs = retryAfterMs,
+        )
+        AiConnectionStatus.INCOMPATIBLE -> AiSetupState.Incompatible(reason)
+        else -> AiSetupState.Failed(
+            reason = reason,
+            attempts = attempts,
+            retryable = retryable,
+        )
+    }
+}
+
 internal fun AiConnectivityCheckState.toAiSetupState(): AiSetupState = when (this) {
     AiConnectivityCheckState.Idle -> AiSetupState.Editing
     is AiConnectivityCheckState.Checking -> AiSetupState.Checking
+    AiConnectivityCheckState.Connected -> AiSetupState.Connected
+    AiConnectivityCheckState.CapabilityChecking -> AiSetupState.CapabilityChecking
     is AiConnectivityCheckState.Retrying -> AiSetupState.Retrying(
         attempt = attempt,
         maxAttempts = maxAttempts,
         reason = reason,
+        retryAfterMs = retryAfterMs,
     )
+    is AiConnectivityCheckState.Unverified -> AiSetupState.Unverified(
+        reason = reason,
+        retryAfterMs = retryAfterMs,
+    )
+    is AiConnectivityCheckState.Incompatible -> AiSetupState.Incompatible(reason)
     AiConnectivityCheckState.Ready -> AiSetupState.Ready
     is AiConnectivityCheckState.Failed -> AiSetupState.Failed(
         reason = reason,

@@ -45,6 +45,7 @@ internal fun answerFailureMessage(safeCode: String): String = when (safeCode) {
     "FORBIDDEN" -> "AI 服务拒绝访问（403），请检查权限"
     "NOT_FOUND" -> "AI 接口不存在（404），请检查地址"
     "MODEL_UNSUPPORTED" -> "模型不存在或不受支持，请检查模型名"
+    "CAPABILITY_UNSUPPORTED" -> "当前模型不支持 ClassSentinel 所需能力"
     "CONFIG" -> "检查 AI 配置"
     "DNS" -> "无法解析 AI 服务域名（DNS）"
     "NETWORK" -> "网络异常，请稍后重试"

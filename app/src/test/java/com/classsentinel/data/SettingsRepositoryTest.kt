@@ -11,6 +11,7 @@ import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
 import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.llm.AnswerTriggerMode
+import com.classsentinel.core.llm.AiConnectionStatus
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +100,7 @@ class SettingsRepositoryTest {
             saveQuestionWordLevel(1)
             saveAsrEngine("xunfei")
             saveSegmentMaxSec(6)
-            saveAiSettings(AiSettings("https://example.test/v1", "sk-abc", "mini"))
+            saveAiVerified(AiSettings("https://example.test/v1", "sk-abc", "mini"))
             setChannelEnabled(Channels.FLASH, true)
             setChannelEnabled(Channels.RINGTONE, true)
             setChannelEnabled(Channels.VIBRATE, false)
@@ -119,7 +120,7 @@ class SettingsRepositoryTest {
             AppConfig.sensitivity.value,
         )
         assertEquals(setOf("notify", "flash", "ringtone"), AppConfig.enabledChannels.value)
-        // AI key 与 ASR key 分离（2026-08-16 修复混用缺陷）：saveAiSettings 不应污染 ASR key
+        // AI key 与 ASR key 分离（2026-08-16 修复混用缺陷）：saveAiVerified 不应污染 ASR key
         assertEquals("", AppConfig.siliconApiKey)
         repo().saveAsrSiliconKey("sk-asr-silicon")
         assertEquals("sk-asr-silicon", AppConfig.siliconApiKey)
@@ -310,5 +311,31 @@ class SettingsRepositoryTest {
 
         resumed.saveOnboardingCompleted()
         assertFalse(resumed.onboardingNameSavedFlow.first())
+    }
+
+    @Test
+    fun `AI draft and last verified configuration remain separate`() = runBlocking {
+        val verified = AiSettings("https://verified.example.test/v1", "verified-key", "verified-model")
+        val draft = AiSettings("https://draft.example.test/v1", "draft-key", "draft-model")
+        val repository = repo()
+
+        repository.saveAiVerified(verified)
+        assertEquals(verified, repository.aiSettingsFlow.first())
+        assertEquals(AiConnectionStatus.READY, repository.aiConnectionStatusFlow.first())
+
+        repository.saveAiDraft(draft)
+
+        assertEquals(draft, repository.aiDraftSettingsFlow.first())
+        assertEquals(verified, repository.aiSettingsFlow.first())
+        assertEquals(verified, repository.aiLastVerifiedSettingsFlow.first())
+        assertEquals(AiConnectionStatus.UNVERIFIED, repository.aiConnectionStatusFlow.first())
+
+        repository.saveAiConnectionStatus(AiConnectionStatus.INCOMPATIBLE)
+        assertEquals(AiConnectionStatus.INCOMPATIBLE, repository.aiConnectionStatusFlow.first())
+
+        repository.saveAiVerified(draft)
+        assertEquals(draft, repository.aiSettingsFlow.first())
+        assertEquals(draft, repository.aiLastVerifiedSettingsFlow.first())
+        assertEquals(AiConnectionStatus.READY, repository.aiConnectionStatusFlow.first())
     }
 }

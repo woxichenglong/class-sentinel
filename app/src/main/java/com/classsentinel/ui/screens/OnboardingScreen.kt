@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiConnectivityChecker
+import com.classsentinel.core.llm.AiConnectionStatus
 import com.classsentinel.core.llm.LlmNameVariantGenerator
 import com.classsentinel.core.llm.LlmAiConnectivityChecker
 import com.classsentinel.core.llm.NameVariantGenerator
@@ -53,12 +54,12 @@ import com.classsentinel.ui.AI_NAME_PRIVACY_NOTICE
 import com.classsentinel.ui.AiSetupState
 import com.classsentinel.ui.NameOnboardingResult
 import com.classsentinel.ui.OnboardingStep
+import com.classsentinel.ui.aiRetrySuggestion
 import com.classsentinel.ui.aiSetupFailureMessage
 import com.classsentinel.ui.canSkipAi
 import com.classsentinel.ui.hasValidNameConfiguration
 import com.classsentinel.ui.initialAiSetupState
 import com.classsentinel.ui.initialOnboardingStep
-import com.classsentinel.ui.isAiSettingsComplete
 import com.classsentinel.ui.prepareOnboardingName
 import com.classsentinel.ui.saveAndCheckAi
 import com.classsentinel.ui.toAiSetupState
@@ -95,6 +96,7 @@ fun OnboardingScreen(
     }
     var step by remember { mutableStateOf<OnboardingStep?>(null) }
     var initialAiSettings by remember { mutableStateOf<AiSettings?>(null) }
+    var initialAiStatus by remember { mutableStateOf<AiConnectionStatus?>(null) }
     var aiReady by remember { mutableStateOf(false) }
     var pendingNameEntry by remember { mutableStateOf<NameEntry?>(null) }
     var savingCalibratedName by remember { mutableStateOf(false) }
@@ -121,11 +123,13 @@ fun OnboardingScreen(
     ) { notifyGranted = it }
 
     LaunchedEffect(settings) {
-        val aiSettings = settings.aiSettingsFlow.first()
+        val aiSettings = settings.aiDraftSettingsFlow.first()
+        val aiStatus = settings.aiConnectionStatusFlow.first()
         val names = settings.nameListFlow.first()
         val completed = settings.onboardingCompletedFlow.first()
         initialAiSettings = aiSettings
-        aiReady = isAiSettingsComplete(aiSettings)
+        initialAiStatus = aiStatus
+        aiReady = aiStatus == AiConnectionStatus.READY
         step = initialOnboardingStep(
             aiConfigured = aiReady,
             hasName = hasValidNameConfiguration(names),
@@ -192,6 +196,7 @@ fun OnboardingScreen(
                         OnboardingStep.AiConfig -> {
                             StepAiConfig(
                                 initialSettings = checkNotNull(initialAiSettings),
+                                initialStatus = checkNotNull(initialAiStatus),
                                 settings = settings,
                                 checker = checker,
                                 onReady = {
@@ -291,6 +296,7 @@ private fun OnboardingProgress(step: OnboardingStep?) {
 @Composable
 private fun StepAiConfig(
     initialSettings: AiSettings,
+    initialStatus: AiConnectionStatus,
     settings: SettingsRepository,
     checker: AiConnectivityChecker,
     onReady: () -> Unit,
@@ -300,10 +306,16 @@ private fun StepAiConfig(
     var baseUrl by remember(initialSettings) { mutableStateOf(initialSettings.baseUrl) }
     var apiKey by remember(initialSettings) { mutableStateOf(initialSettings.apiKey) }
     var model by remember(initialSettings) { mutableStateOf(initialSettings.model) }
-    var state by remember(initialSettings) { mutableStateOf(initialAiSetupState(initialSettings)) }
+    var state by remember(initialSettings, initialStatus) {
+        mutableStateOf(initialAiSetupState(initialSettings, initialStatus))
+    }
 
     fun markEditing() {
-        if (state !is AiSetupState.Checking && state !is AiSetupState.Retrying) {
+        if (state !is AiSetupState.Checking &&
+            state !is AiSetupState.Connected &&
+            state !is AiSetupState.CapabilityChecking &&
+            state !is AiSetupState.Retrying
+        ) {
             state = AiSetupState.Editing
         }
     }
@@ -381,9 +393,25 @@ private fun StepAiConfig(
                 Text("正在检查 AI 连接…")
             }
         }
+        AiSetupState.Connected,
+        AiSetupState.CapabilityChecking,
+        -> Text("服务已连接，正在检查 ClassSentinel 正式能力…")
         is AiSetupState.Retrying -> Text(
             "正在重试（第 ${current.attempt}/${current.maxAttempts} 次）：" +
-                aiSetupFailureMessage(current.reason),
+                aiSetupFailureMessage(current.reason) +
+                (aiRetrySuggestion(current.retryAfterMs)?.let { "；$it" } ?: ""),
+        )
+        is AiSetupState.Unverified -> Text(
+            buildString {
+                append("配置已保存，但当前仍未验证")
+                current.reason?.let { append("：${aiSetupFailureMessage(it)}") }
+                aiRetrySuggestion(current.retryAfterMs)?.let { append("；$it") }
+            },
+        )
+        is AiSetupState.Incompatible -> Text(
+            current.reason?.let(::aiSetupFailureMessage)
+                ?: "当前配置与 ClassSentinel 正式能力不兼容，请更换模型或服务",
+            color = MaterialTheme.colorScheme.error,
         )
         AiSetupState.Ready -> Text("AI 已准备好，将在姓名页启用自动生成")
         is AiSetupState.Failed -> Text(
@@ -399,15 +427,20 @@ private fun StepAiConfig(
             scope.launch {
                 val result = saveAndCheckAi(
                     draft = AiSettings(baseUrl = baseUrl, apiKey = apiKey, model = model),
-                    save = settings::saveAiSettings,
+                    save = settings::saveAiDraft,
                     checker = checker,
                     onConnectivityState = { progress -> state = progress.toAiSetupState() },
+                    saveVerified = settings::saveAiVerified,
+                    saveStatus = settings::saveAiConnectionStatus,
                 )
                 state = result
                 if (result is AiSetupState.Ready) onReady()
             }
         },
-        enabled = state !is AiSetupState.Checking && state !is AiSetupState.Retrying,
+        enabled = state !is AiSetupState.Checking &&
+            state !is AiSetupState.Connected &&
+            state !is AiSetupState.CapabilityChecking &&
+            state !is AiSetupState.Retrying,
         modifier = Modifier.fillMaxWidth(),
     ) { Text("保存并检查 AI") }
     TextButton(

@@ -131,10 +131,10 @@ private fun classifyHttpError(response: Response): LlmError? {
         } else {
             LlmError.Kind.RATE_LIMIT
         }
-        400, 422 -> if (isUnsupportedModel(body)) {
-            LlmError.Kind.MODEL_UNSUPPORTED
-        } else {
-            LlmError.Kind.CONFIG
+        400, 422 -> when {
+            isUnsupportedModel(body) -> LlmError.Kind.MODEL_UNSUPPORTED
+            isUnsupportedCapability(body) -> LlmError.Kind.CAPABILITY_UNSUPPORTED
+            else -> LlmError.Kind.CONFIG
         }
         in 500..599 -> LlmError.Kind.SERVER
         else -> LlmError.Kind.CONFIG
@@ -160,6 +160,18 @@ private fun isUnsupportedModel(body: String): Boolean {
         "invalid model",
         "unavailable",
     ).any(body::contains)
+}
+
+private fun isUnsupportedCapability(body: String): Boolean {
+    val mentionsCapability = body.contains("response_format") ||
+        body.contains("json_object") ||
+        body.contains("thinking")
+    return mentionsCapability && (
+        body.contains("unsupported") ||
+            body.contains("not supported") ||
+            body.contains("invalid") ||
+            body.contains("not permitted")
+        )
 }
 
 private fun isQuotaExhausted(body: String): Boolean =

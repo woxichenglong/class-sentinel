@@ -180,6 +180,15 @@ class LlmClientTest {
     }
 
     @Test
+    fun `unsupported structured output is classified as capability failure`() = runTest {
+        assertHttpError(
+            400,
+            "{\"error\":{\"message\":\"response_format json_object not supported\"}}",
+            LlmError.Kind.CAPABILITY_UNSUPPORTED,
+        )
+    }
+
+    @Test
     fun `unknown host is classified as DNS`() = runTest {
         val dnsClient = OkHttpClient.Builder()
             .dns(object : Dns {

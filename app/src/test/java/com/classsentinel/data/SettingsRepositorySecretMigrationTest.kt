@@ -92,7 +92,7 @@ class SettingsRepositorySecretMigrationTest {
     fun `saving provider keys writes to SecretStore and never to legacy DataStore keys`() = runBlocking {
         val repo = SettingsRepository(dataStore, syncEnabled = false, secretStore = secretStore)
 
-        repo.saveAiSettings(
+        repo.saveAiVerified(
             com.classsentinel.data.AiSettings(
                 baseUrl = " https://provider.test/v1/ ",
                 apiKey = " ai-key ",

@@ -9,25 +9,65 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.util.Locale
 
 /** 可替换的 AI 连通性检查 seam；使用固定请求，不携带姓名或其他个人信息。 */
 typealias AiConnectivityStreamChat = (List<Map<String, String>>, LlmConfig) -> Flow<String>
 typealias AiConnectivityStateListener = (AiConnectivityCheckState) -> Unit
 
+/** Durable status projection; CONNECTED and READY are also used as transient UI phases. */
+enum class AiConnectionStatus {
+    CONNECTED,
+    READY,
+    UNVERIFIED,
+    INCOMPATIBLE,
+    FAILED;
+
+    companion object {
+        fun fromStored(value: String?): AiConnectionStatus =
+            value?.trim()?.uppercase(Locale.ROOT)?.let { normalized ->
+                runCatching { valueOf(normalized) }.getOrNull()
+            } ?: UNVERIFIED
+    }
+}
+
+/** Optional provider features checked separately from basic reachability/model generation. */
+enum class AiCapability {
+    THINKING_DISABLED,
+    JSON_OBJECT_OUTPUT,
+}
+
+object AiConnectivityRequirements {
+    /** Current formal ClassSentinel name-variant path uses both optional capabilities. */
+    val CLASS_SENTINEL: Set<AiCapability> = setOf(
+        AiCapability.THINKING_DISABLED,
+        AiCapability.JSON_OBJECT_OUTPUT,
+    )
+}
+
 /** Connectivity lifecycle exposed to onboarding/settings without provider details. */
 sealed interface AiConnectivityCheckState {
     data object Idle : AiConnectivityCheckState
     data class Checking(val attempt: Int, val maxAttempts: Int) : AiConnectivityCheckState
+    data object Connected : AiConnectivityCheckState
+    data object CapabilityChecking : AiConnectivityCheckState
     data class Retrying(
         val attempt: Int,
         val maxAttempts: Int,
         val reason: AiSetupFailure,
+        val retryAfterMs: Long? = null,
     ) : AiConnectivityCheckState
     data object Ready : AiConnectivityCheckState
+    data class Unverified(
+        val reason: AiSetupFailure,
+        val retryAfterMs: Long? = null,
+    ) : AiConnectivityCheckState
+    data class Incompatible(val reason: AiSetupFailure? = null) : AiConnectivityCheckState
     data class Failed(
         val reason: AiSetupFailure,
         val attempts: Int,
         val retryable: Boolean = reason.retryable,
+        val retryAfterMs: Long? = null,
     ) : AiConnectivityCheckState
 }
 
@@ -49,21 +89,25 @@ interface AiConnectivityChecker {
     }
 }
 
-enum class AiSetupFailure(val retryable: Boolean) {
-    CONFIG(false),
-    AUTH(false),
-    FORBIDDEN(false),
-    NOT_FOUND(false),
-    MODEL_UNSUPPORTED(false),
-    RATE_LIMIT(true),
-    QUOTA_EXHAUSTED(false),
-    DNS(true),
-    NETWORK(true),
-    SERVER(true),
-    TIMEOUT(true),
-    INVALID_RESPONSE(false),
-    SAVE_FAILED(false),
-    UNKNOWN(false),
+enum class AiSetupFailure(
+    val retryable: Boolean,
+    val status: AiConnectionStatus,
+) {
+    CONFIG(false, AiConnectionStatus.FAILED),
+    AUTH(false, AiConnectionStatus.FAILED),
+    FORBIDDEN(false, AiConnectionStatus.FAILED),
+    NOT_FOUND(false, AiConnectionStatus.INCOMPATIBLE),
+    MODEL_UNSUPPORTED(false, AiConnectionStatus.INCOMPATIBLE),
+    CAPABILITY_UNSUPPORTED(false, AiConnectionStatus.INCOMPATIBLE),
+    RATE_LIMIT(true, AiConnectionStatus.UNVERIFIED),
+    QUOTA_EXHAUSTED(false, AiConnectionStatus.FAILED),
+    DNS(true, AiConnectionStatus.UNVERIFIED),
+    NETWORK(true, AiConnectionStatus.UNVERIFIED),
+    SERVER(true, AiConnectionStatus.UNVERIFIED),
+    TIMEOUT(true, AiConnectionStatus.UNVERIFIED),
+    INVALID_RESPONSE(false, AiConnectionStatus.FAILED),
+    SAVE_FAILED(false, AiConnectionStatus.FAILED),
+    UNKNOWN(false, AiConnectionStatus.FAILED),
 }
 
 sealed interface AiConnectivityResult {
@@ -73,6 +117,7 @@ sealed interface AiConnectivityResult {
         val attempts: Int = 1,
         val retryable: Boolean = reason.retryable,
         val retryAfterMs: Long? = null,
+        val status: AiConnectionStatus = reason.status,
     ) : AiConnectivityResult
 }
 
@@ -82,14 +127,14 @@ data class AiConnectivityRetryPolicy(
     val requestTimeoutMs: Long = 10_000L,
     val initialBackoffMs: Long = 250L,
     val maxBackoffMs: Long = 1_000L,
-    val maxRetryAfterMs: Long = 60_000L,
+    val maxRetryAfterMs: Long = 10_000L,
 ) {
     init {
         require(maxAttempts > 0) { "maxAttempts must be positive" }
         require(requestTimeoutMs > 0L) { "requestTimeoutMs must be positive" }
         require(initialBackoffMs >= 0L) { "initialBackoffMs must not be negative" }
         require(maxBackoffMs >= initialBackoffMs) { "maxBackoffMs must not be below initialBackoffMs" }
-        require(maxRetryAfterMs >= 0L) { "maxRetryAfterMs must not be negative" }
+        require(maxRetryAfterMs > 0L) { "maxRetryAfterMs must be positive" }
     }
 
     /** Returns the delay after the completed attempt and before the next attempt. */
@@ -107,11 +152,15 @@ data class AiConnectivityRetryPolicy(
     }
 }
 
-/** 复用现有 LlmClient 的轻量固定 JSON 连通性检查。 */
+/**
+ * Basic reachability/auth/model probe plus an optional second-stage capability check.
+ * The basic request deliberately avoids provider-specific optional fields.
+ */
 class LlmAiConnectivityChecker(
     private val streamChat: AiConnectivityStreamChat? = null,
     private val client: LlmClient = LlmClient(),
     private val retryPolicy: AiConnectivityRetryPolicy = AiConnectivityRetryPolicy(),
+    private val requiredCapabilities: Set<AiCapability> = AiConnectivityRequirements.CLASS_SENTINEL,
 ) : AiConnectivityChecker {
 
     override suspend fun check(settings: AiSettings): AiConnectivityResult = check(settings) {}
@@ -126,14 +175,23 @@ class LlmAiConnectivityChecker(
             return terminalFailure(AiSetupFailure.CONFIG, 1, onStateChange)
         }
 
-        val config = LlmConfig(
+        val basicConfig = LlmConfig(
             baseUrl = normalized.baseUrl,
             apiKey = normalized.apiKey,
             model = normalized.model,
-            thinkingDisabled = true,
-            // This is a real completion, but the response contract keeps the probe tiny.
+            // A basic probe must not require optional provider capabilities.
+            thinkingDisabled = false,
             maxTokens = 8,
-            responseFormatJsonObject = true,
+            responseFormatJsonObject = false,
+            callTimeoutMs = retryPolicy.requestTimeoutMs,
+        )
+        val capabilityConfig = LlmConfig(
+            baseUrl = normalized.baseUrl,
+            apiKey = normalized.apiKey,
+            model = normalized.model,
+            thinkingDisabled = AiCapability.THINKING_DISABLED in requiredCapabilities,
+            maxTokens = 8,
+            responseFormatJsonObject = AiCapability.JSON_OBJECT_OUTPUT in requiredCapabilities,
             callTimeoutMs = retryPolicy.requestTimeoutMs,
         )
 
@@ -146,31 +204,50 @@ class LlmAiConnectivityChecker(
                     maxAttempts = retryPolicy.maxAttempts,
                 ),
             )
+            var stage = ProbeStage.BASIC
             val result = try {
-                // withTimeoutOrNull only consumes its own deadline; caller cancellation propagates.
-                val raw = withTimeoutOrNull(retryPolicy.requestTimeoutMs) {
-                    request(connectivityMessages(), config)
-                }
-                when {
-                    raw == null -> AiConnectivityResult.Failure(AiSetupFailure.TIMEOUT, attempt)
-                    raw.isBlank() -> AiConnectivityResult.Failure(AiSetupFailure.INVALID_RESPONSE, attempt)
-                    parseOk(raw) -> AiConnectivityResult.Success
-                    else -> AiConnectivityResult.Failure(AiSetupFailure.INVALID_RESPONSE, attempt)
+                val basic = runProbe(
+                    messages = basicConnectivityMessages(),
+                    config = basicConfig,
+                    stage = ProbeStage.BASIC,
+                )
+                if (basic is AiConnectivityResult.Failure || requiredCapabilities.isEmpty()) {
+                    if (basic is AiConnectivityResult.Success) {
+                        onStateChange(AiConnectivityCheckState.Connected)
+                    }
+                    basic
+                } else {
+                    // Basic generation succeeded; only now test capabilities required by the
+                    // formal ClassSentinel path.
+                    onStateChange(AiConnectivityCheckState.Connected)
+                    onStateChange(AiConnectivityCheckState.CapabilityChecking)
+                    stage = ProbeStage.CAPABILITY
+                    runProbe(
+                        messages = capabilityMessages(),
+                        config = capabilityConfig,
+                        stage = stage,
+                    )
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: LlmException) {
+                val reason = e.error.toSetupFailure(stage)
                 AiConnectivityResult.Failure(
-                    reason = e.error.toSetupFailure(),
+                    reason = reason,
                     attempts = attempt,
                     retryable = e.error.retryable,
                     retryAfterMs = e.error.retryAfterMs,
                 )
             } catch (e: IOException) {
-                val reason = LlmError(classifyTransportException(e)).toSetupFailure()
+                val reason = LlmError(classifyTransportException(e)).toSetupFailure(stage)
                 AiConnectivityResult.Failure(reason, attempt)
             } catch (_: Exception) {
-                AiConnectivityResult.Failure(AiSetupFailure.UNKNOWN, attempt)
+                val reason = if (stage == ProbeStage.CAPABILITY) {
+                    AiSetupFailure.CAPABILITY_UNSUPPORTED
+                } else {
+                    AiSetupFailure.UNKNOWN
+                }
+                AiConnectivityResult.Failure(reason, attempt)
             }
 
             if (result is AiConnectivityResult.Success) {
@@ -179,15 +256,19 @@ class LlmAiConnectivityChecker(
             }
 
             val failure = result as AiConnectivityResult.Failure
+            val terminal = failure.copy(attempts = attempt)
+            if (failure.status == AiConnectionStatus.INCOMPATIBLE) {
+                onStateChange(AiConnectivityCheckState.Incompatible(failure.reason))
+                return terminal
+            }
             if (!failure.retryable || attempt >= retryPolicy.maxAttempts) {
-                val terminal = failure.copy(attempts = attempt)
-                onStateChange(
-                    AiConnectivityCheckState.Failed(
-                        reason = terminal.reason,
-                        attempts = terminal.attempts,
-                        retryable = terminal.retryable,
-                    ),
-                )
+                emitTerminalState(terminal, onStateChange)
+                return terminal
+            }
+            if (failure.retryAfterMs != null && failure.retryAfterMs > retryPolicy.maxRetryAfterMs) {
+                // Interactive checks must not block longer than the local limit. Keep the
+                // original provider hint so the UI can tell the user when to retry.
+                emitTerminalState(terminal, onStateChange)
                 return terminal
             }
 
@@ -197,13 +278,10 @@ class LlmAiConnectivityChecker(
                     attempt = nextAttempt,
                     maxAttempts = retryPolicy.maxAttempts,
                     reason = failure.reason,
+                    retryAfterMs = failure.retryAfterMs,
                 ),
             )
-            val waitMs = if (failure.retryAfterMs != null) {
-                failure.retryAfterMs.coerceIn(0L, retryPolicy.maxRetryAfterMs)
-            } else {
-                retryPolicy.backoffAfter(attempt)
-            }
+            val waitMs = failure.retryAfterMs ?: retryPolicy.backoffAfter(attempt)
             if (waitMs > 0L) delay(waitMs)
         }
 
@@ -218,6 +296,33 @@ class LlmAiConnectivityChecker(
         .toList()
         .joinToString("")
         .trim()
+
+    private suspend fun runProbe(
+        messages: List<Map<String, String>>,
+        config: LlmConfig,
+        stage: ProbeStage,
+    ): AiConnectivityResult {
+        // withTimeoutOrNull only consumes its own deadline; caller cancellation propagates.
+        val raw = withTimeoutOrNull(retryPolicy.requestTimeoutMs) {
+            request(messages, config)
+        } ?: return AiConnectivityResult.Failure(AiSetupFailure.TIMEOUT)
+        if (raw.isBlank()) {
+            return AiConnectivityResult.Failure(
+                if (stage == ProbeStage.CAPABILITY) {
+                    AiSetupFailure.CAPABILITY_UNSUPPORTED
+                } else {
+                    AiSetupFailure.INVALID_RESPONSE
+                },
+            )
+        }
+        if (stage == ProbeStage.CAPABILITY &&
+            AiCapability.JSON_OBJECT_OUTPUT in requiredCapabilities &&
+            !parseOk(raw)
+        ) {
+            return AiConnectivityResult.Failure(AiSetupFailure.CAPABILITY_UNSUPPORTED)
+        }
+        return AiConnectivityResult.Success
+    }
 
     private fun parseOk(raw: String): Boolean {
         val value = try {
@@ -235,16 +340,52 @@ class LlmAiConnectivityChecker(
         return value.opt("ok") == true
     }
 
-    private fun connectivityMessages(): List<Map<String, String>> = listOf(
+    private fun basicConnectivityMessages(): List<Map<String, String>> = listOf(
         mapOf(
             "role" to "system",
-            "content" to "你是 AI 连通性检查服务。只输出严格 JSON 对象，且只能有 ok 一个布尔字段。不要输出解释、Markdown 或代码围栏。",
+            "content" to "你是 AI 连通性检查服务。请完成这次最小生成，并只返回一句简短确认。",
         ),
         mapOf(
             "role" to "user",
-            "content" to "这是固定连接检查，不包含个人信息。请返回 {\"ok\":true}。",
+            "content" to "这是固定连接检查，不包含个人信息。请完成一次最小文本生成。",
         ),
     )
+
+    private fun capabilityMessages(): List<Map<String, String>> = listOf(
+        mapOf(
+            "role" to "system",
+            "content" to "只输出严格 JSON 对象，且只能有 ok 一个布尔字段。不要输出解释、Markdown 或代码围栏。",
+        ),
+        mapOf(
+            "role" to "user",
+            "content" to "这是正式能力检查，不包含个人信息。请返回 {\"ok\":true}。",
+        ),
+    )
+
+    private fun emitTerminalState(
+        failure: AiConnectivityResult.Failure,
+        onStateChange: AiConnectivityStateListener,
+    ) {
+        when (failure.status) {
+            AiConnectionStatus.UNVERIFIED -> onStateChange(
+                AiConnectivityCheckState.Unverified(
+                    reason = failure.reason,
+                    retryAfterMs = failure.retryAfterMs,
+                ),
+            )
+            AiConnectionStatus.INCOMPATIBLE -> onStateChange(
+                AiConnectivityCheckState.Incompatible(failure.reason),
+            )
+            else -> onStateChange(
+                AiConnectivityCheckState.Failed(
+                    reason = failure.reason,
+                    attempts = failure.attempts,
+                    retryable = failure.retryable,
+                    retryAfterMs = failure.retryAfterMs,
+                ),
+            )
+        }
+    }
 
     private fun terminalFailure(
         reason: AiSetupFailure,
@@ -263,11 +404,18 @@ class LlmAiConnectivityChecker(
     }
 }
 
-private fun LlmError.toSetupFailure(): AiSetupFailure = when (kind) {
+private enum class ProbeStage {
+    BASIC,
+    CAPABILITY,
+}
+
+private fun LlmError.toSetupFailure(stage: ProbeStage): AiSetupFailure {
+    val mapped = when (kind) {
     LlmError.Kind.AUTH -> AiSetupFailure.AUTH
     LlmError.Kind.FORBIDDEN -> AiSetupFailure.FORBIDDEN
     LlmError.Kind.NOT_FOUND -> AiSetupFailure.NOT_FOUND
     LlmError.Kind.MODEL_UNSUPPORTED -> AiSetupFailure.MODEL_UNSUPPORTED
+    LlmError.Kind.CAPABILITY_UNSUPPORTED -> AiSetupFailure.CAPABILITY_UNSUPPORTED
     LlmError.Kind.CONFIG -> AiSetupFailure.CONFIG
     LlmError.Kind.RATE_LIMIT -> AiSetupFailure.RATE_LIMIT
     LlmError.Kind.QUOTA_EXHAUSTED -> AiSetupFailure.QUOTA_EXHAUSTED
@@ -279,13 +427,29 @@ private fun LlmError.toSetupFailure(): AiSetupFailure = when (kind) {
     LlmError.Kind.INVALID_RESPONSE,
     -> AiSetupFailure.INVALID_RESPONSE
     LlmError.Kind.UNKNOWN -> AiSetupFailure.UNKNOWN
+    }
+    return if (stage == ProbeStage.CAPABILITY &&
+        mapped in setOf(AiSetupFailure.CONFIG, AiSetupFailure.INVALID_RESPONSE)
+    ) {
+        AiSetupFailure.CAPABILITY_UNSUPPORTED
+    } else {
+        mapped
+    }
 }
 
 private fun AiConnectivityResult.toCheckState(): AiConnectivityCheckState = when (this) {
     AiConnectivityResult.Success -> AiConnectivityCheckState.Ready
-    is AiConnectivityResult.Failure -> AiConnectivityCheckState.Failed(
-        reason = reason,
-        attempts = attempts,
-        retryable = retryable,
-    )
+    is AiConnectivityResult.Failure -> when (status) {
+        AiConnectionStatus.UNVERIFIED -> AiConnectivityCheckState.Unverified(
+            reason = reason,
+            retryAfterMs = retryAfterMs,
+        )
+        AiConnectionStatus.INCOMPATIBLE -> AiConnectivityCheckState.Incompatible(reason)
+        else -> AiConnectivityCheckState.Failed(
+            reason = reason,
+            attempts = attempts,
+            retryable = retryable,
+            retryAfterMs = retryAfterMs,
+        )
+    }
 }

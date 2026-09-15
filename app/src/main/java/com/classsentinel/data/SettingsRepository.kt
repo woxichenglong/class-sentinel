@@ -17,6 +17,7 @@ import com.classsentinel.core.audio.AudioRetentionPolicy
 import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.detect.Sensitivity
+import com.classsentinel.core.llm.AiConnectionStatus
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.AnswerTriggerMode
 import com.classsentinel.core.log.SafeLog
@@ -64,7 +65,8 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * asrEngineFlow/saveAsrEngine、
  * answerTriggerModeFlow/saveAnswerTriggerMode、questionAlertModeFlow/saveQuestionAlertMode、
  * channelFlow/setChannelEnabled、
- * aiSettingsFlow/saveAiSettings。
+ * aiDraftSettingsFlow/saveAiDraft、aiSettingsFlow/saveAiVerified、
+ * aiConnectionStatusFlow/saveAiConnectionStatus。
  */
 class SettingsRepository(
     private val dataStore: DataStore<Preferences>,
@@ -263,15 +265,59 @@ class SettingsRepository(
         .map { it[Keys.VIBRATE_MODE] ?: "normal" }
         .ioCatch { "normal" }
 
-    val aiSettingsFlow: Flow<AiSettings> = dataStore.data
+    /** User-editable draft; it may be unverified and must not drive the formal answer path. */
+    val aiDraftSettingsFlow: Flow<AiSettings> = dataStore.data
         .map { p ->
             AiSettings(
-                baseUrl = p[Keys.AI_BASE_URL] ?: DEFAULT_AI_SETTINGS.baseUrl,
-                apiKey = secretStore.get(SecretKeys.AI_API_KEY).orEmpty(),
-                model = p[Keys.AI_MODEL] ?: DEFAULT_AI_SETTINGS.model,
+                baseUrl = p[Keys.AI_DRAFT_BASE_URL]
+                    ?: p[Keys.AI_BASE_URL]
+                    ?: DEFAULT_AI_SETTINGS.baseUrl,
+                apiKey = secretStore.get(SecretKeys.AI_DRAFT_API_KEY)
+                    ?: secretStore.get(SecretKeys.AI_API_KEY).orEmpty(),
+                model = p[Keys.AI_DRAFT_MODEL]
+                    ?: p[Keys.AI_MODEL]
+                    ?: DEFAULT_AI_SETTINGS.model,
             )
         }
         .ioCatch { DEFAULT_AI_SETTINGS }
+
+    /** Last verified configuration used by production LLM callers; never falls back to draft. */
+    val aiLastVerifiedSettingsFlow: Flow<AiSettings?> = dataStore.data
+        .map { p ->
+            val baseUrl = p[Keys.AI_VERIFIED_BASE_URL] ?: p[Keys.AI_BASE_URL]
+            val model = p[Keys.AI_VERIFIED_MODEL] ?: p[Keys.AI_MODEL]
+            val apiKey = secretStore.get(SecretKeys.AI_VERIFIED_API_KEY)
+                ?: secretStore.get(SecretKeys.AI_API_KEY)
+            if (baseUrl.isNullOrBlank() || model.isNullOrBlank() || apiKey.isNullOrBlank()) {
+                null
+            } else {
+                AiSettings(baseUrl = baseUrl, apiKey = apiKey, model = model)
+            }
+        }
+        .ioCatch { null }
+
+    /** Effective production configuration. An unverified draft is intentionally invisible here. */
+    val aiSettingsFlow: Flow<AiSettings> = aiLastVerifiedSettingsFlow
+        .map { it ?: DEFAULT_AI_SETTINGS }
+        .ioCatch { DEFAULT_AI_SETTINGS }
+
+    /** Durable status for the draft/verified pair; legacy complete settings remain compatible. */
+    val aiConnectionStatusFlow: Flow<AiConnectionStatus> = dataStore.data
+        .map { p ->
+            p[Keys.AI_CONNECTION_STATUS]?.let(AiConnectionStatus::fromStored)
+                ?: run {
+                    val baseUrl = p[Keys.AI_VERIFIED_BASE_URL] ?: p[Keys.AI_BASE_URL]
+                    val model = p[Keys.AI_VERIFIED_MODEL] ?: p[Keys.AI_MODEL]
+                    val apiKey = secretStore.get(SecretKeys.AI_VERIFIED_API_KEY)
+                        ?: secretStore.get(SecretKeys.AI_API_KEY)
+                    if (!baseUrl.isNullOrBlank() && !model.isNullOrBlank() && !apiKey.isNullOrBlank()) {
+                        AiConnectionStatus.READY
+                    } else {
+                        AiConnectionStatus.UNVERIFIED
+                    }
+                }
+        }
+        .ioCatch { AiConnectionStatus.UNVERIFIED }
 
     val answerLengthFlow: Flow<String> = dataStore.data
         .map { it[Keys.ANSWER_LENGTH] ?: "mid" }
@@ -428,23 +474,57 @@ class SettingsRepository(
         AppConfig.vibrationMode.value = normalized
     }
 
-    suspend fun saveAiSettings(ai: AiSettings) {
+    /** Save a syntactically valid user draft without replacing the last verified config. */
+    suspend fun saveAiDraft(ai: AiSettings) {
         val normalized = AiProviderPreset.normalizeSettings(ai)
-        writeSecret(SecretKeys.AI_API_KEY, normalized.apiKey)
+        writeSecret(SecretKeys.AI_DRAFT_API_KEY, normalized.apiKey)
         dataStore.edit {
-            it[Keys.AI_BASE_URL] = normalized.baseUrl
-            it.remove(Keys.LEGACY_AI_API_KEY)
-            it[Keys.AI_MODEL] = normalized.model
+            it[Keys.AI_DRAFT_BASE_URL] = normalized.baseUrl
+            it[Keys.AI_DRAFT_MODEL] = normalized.model
+            it[Keys.AI_CONNECTION_STATUS] = AiConnectionStatus.UNVERIFIED.name
         }
     }
 
+    /** Promote a draft after a successful basic and capability check. */
+    suspend fun saveAiVerified(ai: AiSettings) {
+        val normalized = AiProviderPreset.normalizeSettings(ai)
+        writeSecret(SecretKeys.AI_DRAFT_API_KEY, normalized.apiKey)
+        writeSecret(SecretKeys.AI_VERIFIED_API_KEY, normalized.apiKey)
+        // Keep the old key populated for legacy migrations and older callers.
+        writeSecret(SecretKeys.AI_API_KEY, normalized.apiKey)
+        dataStore.edit {
+            it[Keys.AI_DRAFT_BASE_URL] = normalized.baseUrl
+            it[Keys.AI_DRAFT_MODEL] = normalized.model
+            it[Keys.AI_VERIFIED_BASE_URL] = normalized.baseUrl
+            it[Keys.AI_VERIFIED_MODEL] = normalized.model
+            it[Keys.AI_BASE_URL] = normalized.baseUrl
+            it.remove(Keys.LEGACY_AI_API_KEY)
+            it[Keys.AI_MODEL] = normalized.model
+            it[Keys.AI_CONNECTION_STATUS] = AiConnectionStatus.READY.name
+        }
+    }
+
+    /** Compatibility API: a direct save is an unverified draft, never a verified promotion. */
+    @Deprecated("Use saveAiDraft or saveAiVerified after a successful check")
+    suspend fun saveAiSettings(ai: AiSettings) = saveAiDraft(ai)
+
+    suspend fun saveAiConnectionStatus(status: AiConnectionStatus) {
+        dataStore.edit { it[Keys.AI_CONNECTION_STATUS] = status.name }
+    }
+
     suspend fun saveAiBaseUrl(url: String) {
-        dataStore.edit { it[Keys.AI_BASE_URL] = AiProviderPreset.normalizeBaseUrl(url) }
+        dataStore.edit {
+            it[Keys.AI_DRAFT_BASE_URL] = AiProviderPreset.normalizeBaseUrl(url)
+            it[Keys.AI_CONNECTION_STATUS] = AiConnectionStatus.UNVERIFIED.name
+        }
     }
 
     suspend fun saveAiApiKey(key: String) {
-        writeSecret(SecretKeys.AI_API_KEY, key.trim())
-        dataStore.edit { it.remove(Keys.LEGACY_AI_API_KEY) }
+        writeSecret(SecretKeys.AI_DRAFT_API_KEY, key.trim())
+        dataStore.edit {
+            it.remove(Keys.LEGACY_AI_API_KEY)
+            it[Keys.AI_CONNECTION_STATUS] = AiConnectionStatus.UNVERIFIED.name
+        }
     }
 
     suspend fun saveAsrSiliconKey(key: String) {
@@ -456,7 +536,10 @@ class SettingsRepository(
 
     suspend fun saveAiModel(model: String) {
         require(model.trim().isNotBlank()) { "AI model must not be blank" }
-        dataStore.edit { it[Keys.AI_MODEL] = model.trim() }
+        dataStore.edit {
+            it[Keys.AI_DRAFT_MODEL] = model.trim()
+            it[Keys.AI_CONNECTION_STATUS] = AiConnectionStatus.UNVERIFIED.name
+        }
     }
 
     suspend fun saveAnswerLength(length: String) {
@@ -633,9 +716,14 @@ private object Keys {
     val LOCKSCREEN_NOTIFY = booleanPreferencesKey("lockscreen_notify")
     val VIBRATE_MODE = stringPreferencesKey("vibrate_mode")
     val AI_BASE_URL = stringPreferencesKey("ai_base_url")
+    val AI_DRAFT_BASE_URL = stringPreferencesKey("ai_draft_base_url")
+    val AI_VERIFIED_BASE_URL = stringPreferencesKey("ai_verified_base_url")
     val LEGACY_AI_API_KEY = stringPreferencesKey(SecretKeys.AI_API_KEY)
     val LEGACY_ASR_SILICON_KEY = stringPreferencesKey(SecretKeys.ASR_SILICON_KEY)
     val AI_MODEL = stringPreferencesKey("ai_model")
+    val AI_DRAFT_MODEL = stringPreferencesKey("ai_draft_model")
+    val AI_VERIFIED_MODEL = stringPreferencesKey("ai_verified_model")
+    val AI_CONNECTION_STATUS = stringPreferencesKey("ai_connection_status")
     val ANSWER_LENGTH = stringPreferencesKey("answer_length")
     val ANSWER_STYLE = stringPreferencesKey("answer_style")
     val STREAM_OUTPUT = booleanPreferencesKey("stream_output")

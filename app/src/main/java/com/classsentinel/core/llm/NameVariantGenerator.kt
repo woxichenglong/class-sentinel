@@ -25,6 +25,7 @@ enum class NameVariantFailureCode {
     FORBIDDEN,
     NOT_FOUND,
     MODEL_UNSUPPORTED,
+    CAPABILITY_UNSUPPORTED,
     RATE_LIMIT,
     QUOTA_EXHAUSTED,
     DNS,
@@ -220,6 +221,7 @@ private fun LlmError.toFailureCode(): NameVariantFailureCode = when (kind) {
     LlmError.Kind.FORBIDDEN -> NameVariantFailureCode.FORBIDDEN
     LlmError.Kind.NOT_FOUND -> NameVariantFailureCode.NOT_FOUND
     LlmError.Kind.MODEL_UNSUPPORTED -> NameVariantFailureCode.MODEL_UNSUPPORTED
+    LlmError.Kind.CAPABILITY_UNSUPPORTED -> NameVariantFailureCode.CAPABILITY_UNSUPPORTED
     LlmError.Kind.CONFIG -> NameVariantFailureCode.CONFIG
     LlmError.Kind.RATE_LIMIT -> NameVariantFailureCode.RATE_LIMIT
     LlmError.Kind.QUOTA_EXHAUSTED -> NameVariantFailureCode.QUOTA_EXHAUSTED

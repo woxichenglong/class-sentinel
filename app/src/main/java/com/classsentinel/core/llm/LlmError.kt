@@ -16,6 +16,7 @@ data class LlmError(
         FORBIDDEN,
         NOT_FOUND,
         MODEL_UNSUPPORTED,
+        CAPABILITY_UNSUPPORTED,
         CONFIG,
         RATE_LIMIT,
         QUOTA_EXHAUSTED,

@@ -62,6 +62,7 @@ import androidx.core.content.ContextCompat
 import com.classsentinel.core.alert.QuestionAlertMode
 import com.classsentinel.core.detect.NameEntry
 import com.classsentinel.core.llm.AiConnectivityChecker
+import com.classsentinel.core.llm.AiConnectionStatus
 import com.classsentinel.core.llm.AiProviderPreset
 import com.classsentinel.core.llm.LlmAiConnectivityChecker
 import com.classsentinel.core.llm.AnswerTriggerMode
@@ -75,6 +76,7 @@ import com.classsentinel.ui.components.AuroraCard
 import com.classsentinel.ui.components.ScreenHeader
 import com.classsentinel.ui.components.SettingsRow
 import com.classsentinel.ui.AiSetupState
+import com.classsentinel.ui.aiRetrySuggestion
 import com.classsentinel.ui.aiSetupFailureMessage
 import com.classsentinel.ui.saveAndCheckAi
 import com.classsentinel.ui.toAiSetupState
@@ -115,7 +117,8 @@ fun SettingsHubScreen() {
     val chNotify by repo.channelFlow(Channels.NOTIFY).collectAsState(initial = true)
     val questionAlertMode by repo.questionAlertModeFlow.collectAsState(initial = QuestionAlertMode.DEFAULT)
     val vibrateMode by repo.vibrationModeFlow.collectAsState(initial = "normal")
-    val ai by repo.aiSettingsFlow.collectAsState(initial = defaultAiSettingsForUi())
+    val ai by repo.aiDraftSettingsFlow.collectAsState(initial = defaultAiSettingsForUi())
+    val aiStatus by repo.aiConnectionStatusFlow.collectAsState(initial = AiConnectionStatus.UNVERIFIED)
     val answerLength by repo.answerLengthFlow.collectAsState(initial = "mid")
     val answerStyle by repo.answerStyleFlow.collectAsState(initial = "terseness")
     val streamOutput by repo.streamOutputFlow.collectAsState(initial = true)
@@ -211,6 +214,7 @@ fun SettingsHubScreen() {
                 streamOutput = streamOutput,
                 answerTriggerMode = answerTriggerMode,
                 checker = aiConnectivityChecker,
+                persistedStatus = aiStatus,
                 save = ::saveSnap,
                 onBack = { pageName = SettingsHubPage.OVERVIEW.name },
             )
@@ -590,6 +594,7 @@ private fun SettingsAiPage(
     streamOutput: Boolean,
     answerTriggerMode: AnswerTriggerMode,
     checker: AiConnectivityChecker,
+    persistedStatus: AiConnectionStatus,
     save: (((suspend () -> Unit)) -> Unit),
     onBack: () -> Unit,
 ) {
@@ -600,10 +605,16 @@ private fun SettingsAiPage(
     var apiKey by remember(ai.apiKey) { mutableStateOf(ai.apiKey) }
     var model by remember(ai.model) { mutableStateOf(ai.model) }
     var visible by remember { mutableStateOf(false) }
-    var connectionState by remember { mutableStateOf<AiSetupState>(AiSetupState.Unconfigured) }
+    var connectionState by remember(persistedStatus) {
+        mutableStateOf<AiSetupState>(persistedStatus.toAiSetupState())
+    }
 
     fun markEditing() {
-        if (connectionState !is AiSetupState.Checking && connectionState !is AiSetupState.Retrying) {
+        if (connectionState !is AiSetupState.Checking &&
+            connectionState !is AiSetupState.Connected &&
+            connectionState !is AiSetupState.CapabilityChecking &&
+            connectionState !is AiSetupState.Retrying
+        ) {
             connectionState = AiSetupState.Editing
         }
     }
@@ -676,9 +687,25 @@ private fun SettingsAiPage(
                     AiSetupState.Unconfigured -> Text("尚未验证 AI 配置")
                     AiSetupState.Editing -> Text("保存时会发送一次最小真实推理请求，确认模型可用")
                     AiSetupState.Checking -> Text("正在检查 AI 模型…")
+                    AiSetupState.Connected,
+                    AiSetupState.CapabilityChecking,
+                    -> Text("服务已连接，正在检查 ClassSentinel 正式能力…")
                     is AiSetupState.Retrying -> Text(
                         "正在重试（第 ${current.attempt}/${current.maxAttempts} 次）：" +
-                            aiSetupFailureMessage(current.reason),
+                            aiSetupFailureMessage(current.reason) +
+                            (aiRetrySuggestion(current.retryAfterMs)?.let { "；$it" } ?: ""),
+                    )
+                    is AiSetupState.Unverified -> Text(
+                        buildString {
+                            append("配置已保存，但当前仍未验证")
+                            current.reason?.let { append("：${aiSetupFailureMessage(it)}") }
+                            aiRetrySuggestion(current.retryAfterMs)?.let { append("；$it") }
+                        },
+                    )
+                    is AiSetupState.Incompatible -> Text(
+                        current.reason?.let(::aiSetupFailureMessage)
+                            ?: "当前配置与 ClassSentinel 正式能力不兼容，请更换模型或服务",
+                        color = MaterialTheme.colorScheme.error,
                     )
                     AiSetupState.Ready -> Text("AI 模型已验证可用")
                     is AiSetupState.Failed -> Text(
@@ -693,16 +720,20 @@ private fun SettingsAiPage(
                         scope.launch {
                             val result = saveAndCheckAi(
                                 draft = AiSettings(baseUrl, apiKey, model),
-                                save = settings::saveAiSettings,
+                                save = settings::saveAiDraft,
                                 checker = checker,
                                 onConnectivityState = { progress ->
                                     connectionState = progress.toAiSetupState()
                                 },
+                                saveVerified = settings::saveAiVerified,
+                                saveStatus = settings::saveAiConnectionStatus,
                             )
                             connectionState = result
                         }
                     },
                     enabled = connectionState !is AiSetupState.Checking &&
+                        connectionState !is AiSetupState.Connected &&
+                        connectionState !is AiSetupState.CapabilityChecking &&
                         connectionState !is AiSetupState.Retrying,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("保存并检查 AI") }

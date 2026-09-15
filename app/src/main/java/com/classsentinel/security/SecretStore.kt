@@ -3,6 +3,8 @@ package com.classsentinel.security
 /** Stable names for secrets kept outside Preferences DataStore. */
 object SecretKeys {
     const val AI_API_KEY = "ai_api_key"
+    const val AI_DRAFT_API_KEY = "ai_draft_api_key"
+    const val AI_VERIFIED_API_KEY = "ai_verified_api_key"
     const val ASR_SILICON_KEY = "asr_silicon_key"
 }
 

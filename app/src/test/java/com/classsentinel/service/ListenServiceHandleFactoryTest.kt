@@ -93,7 +93,7 @@ class ListenServiceHandleFactoryTest {
                 ),
             )
             settings.saveAutoSummary(true)
-            settings.saveAiSettings(AiSettings("https://llm.invalid/v1", "test-key", "test-model"))
+            settings.saveAiVerified(AiSettings("https://llm.invalid/v1", "test-key", "test-model"))
             SettingsRepositoryHolder.installForTests(settings)
 
             val handle = createControllerHandle(
